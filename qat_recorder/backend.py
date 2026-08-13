@@ -118,7 +118,24 @@ class QatBackend:
         return props
 
     def find_all(self, definition):
-        return list(self.qat.find_all_objects(dict(definition)))
+        """Objects matching a definition, or an empty list.
+
+        Qat *raises* LookupError when nothing matches rather than returning an
+        empty list. Every caller here treats "no match" as a normal answer --
+        the resolver tries candidate definitions precisely to discover which
+        ones fail -- so the exception is translated into the empty result the
+        port promises.
+
+        This matters more than it sounds. Qat also adds `visible: true` and
+        `enabled: true` to every definition, so an object on a tab that is not
+        currently shown simply cannot be found. Left unhandled, one click on a
+        widget that was later hidden aborted an entire recording and discarded
+        every event captured with it.
+        """
+        try:
+            return list(self.qat.find_all_objects(dict(definition)))
+        except LookupError:
+            return []
 
     def identity(self, node):
         """Stable identity for a remote object.

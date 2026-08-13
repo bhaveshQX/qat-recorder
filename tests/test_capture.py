@@ -325,6 +325,38 @@ def test_unresolvable_events_are_counted_not_guessed(session):
     assert [a.kind for a in recording.actions] == [ActionKind.LAUNCH]
 
 
+def test_one_failing_event_does_not_destroy_the_recording():
+    """A recording is minutes of someone's time.
+
+    Qat raises rather than returning an empty list when nothing matches, and it
+    adds `visible: true` to every definition — so a click on a widget that is
+    later hidden used to abort the whole session and discard every event with
+    it. Reproduced here with a backend that raises on one specific lookup.
+    """
+    backend, nodes = build_tree()
+    real_find_all = backend.find_all
+
+    def exploding_find_all(definition):
+        if definition.get("objectName") == "statusLabel":
+            raise LookupError("Unable to find object: no object found")
+        return real_find_all(definition)
+
+    backend.find_all = exploding_find_all
+    capture = CaptureSession(backend, app_name="sample")
+
+    capture.feed_all([
+        *click_pair(1000, "QPushButton", "loginButton"),
+        *click_pair(2000, "QLabel", "statusLabel"),      # this one explodes
+        *click_pair(3000, "QComboBox", "envSelector"),
+    ])
+    recording = capture.finish()
+
+    kinds = [a.kind for a in recording.actions]
+    assert kinds.count(ActionKind.CLICK) == 2, "the good events must survive"
+    assert capture.unresolved > 0
+    assert capture.failures, "and the operator must be told why"
+
+
 # --- wire format -----------------------------------------------------------
 
 def test_parse_lines_skips_malformed_records():

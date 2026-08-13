@@ -60,6 +60,20 @@ def test_objectname_lookup_is_unique(live_backend):
         assert _count(live_backend, {"objectName": name}) == 1, name
 
 
+def test_a_definition_matching_nothing_returns_empty_rather_than_raising(
+        live_backend):
+    """Qat's find_all_objects RAISES LookupError when nothing matches.
+
+    The whole resolver is built on trying candidate definitions and counting the
+    matches, so "no match" has to be an ordinary answer. Left untranslated, the
+    exception escaped and aborted an entire recording on a real application —
+    the object had simply moved to a tab that was no longer visible, and Qat
+    adds `visible: true` to every definition.
+    """
+    assert live_backend.find_all({"objectName": "definitelyNotAnObject"}) == []
+    assert live_backend.find_all({"type": "NoSuchWidgetClass"}) == []
+
+
 def test_type_matching_is_inheritance_aware(live_backend):
     """The resolver relies on `type` matching base classes, not just the exact
     class. If this fails, every `type`-based definition narrows differently than

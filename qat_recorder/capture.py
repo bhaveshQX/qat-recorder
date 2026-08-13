@@ -188,6 +188,9 @@ class CaptureSession:
         self._typing_t: int = 0
         self._resolved_cache: dict = {}
         self.unresolved = 0
+        #: Human-readable reasons individual events were dropped, so the count
+        #: is explicable rather than mysterious.
+        self.failures: list = []
 
         self.recording.add(Action(ActionKind.LAUNCH, args={"app": app_name}, t=0.0))
 
@@ -201,8 +204,21 @@ class CaptureSession:
         self._group.append(event)
 
     def feed_all(self, events: Iterable[RawEvent]) -> None:
+        """Fold a batch of events, surviving individual failures.
+
+        A recording is minutes of a person's time. One event that cannot be
+        resolved -- because the object was destroyed, or is on a tab that is no
+        longer shown -- must cost that one step, not the whole session. An
+        earlier version let the exception escape and discarded 124 captured
+        events along with it.
+        """
         for event in events:
-            self.feed(event)
+            try:
+                self.feed(event)
+            except Exception as error:                       # noqa: BLE001
+                self.unresolved += 1
+                self.failures.append(f"{event.kind} on "
+                                     f"{event.target.cls or '?'}: {error}")
 
     def flush_stale(self, now_ms: Optional[int] = None,
                     max_age_ms: int = 150) -> bool:

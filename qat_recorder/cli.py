@@ -186,6 +186,15 @@ def _cmd_record(args) -> int:
 
     print(f"{len(recording.actions)} action(s), {session.unresolved} unresolved")
     print(f"written to {out}")
+
+    # An unresolved count with no explanation is just a mystery. Usually the
+    # object was on a tab that is no longer shown -- Qat adds `visible: true` to
+    # every definition, so anything hidden at resolution time cannot be found.
+    for reason in session.failures[:5]:
+        print(f"  dropped: {reason}", file=sys.stderr)
+    if len(session.failures) > 5:
+        print(f"  ... and {len(session.failures) - 5} more", file=sys.stderr)
+
     for action in recording.weakest_targets():
         print(f"  {action.target.robustness.value:<10} {action.target.label}",
               file=sys.stderr)
