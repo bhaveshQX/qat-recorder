@@ -30,6 +30,14 @@ def build_tree():
     save_action = window.add(FakeNode(["QAction", "QObject"], {
         "objectName": "saveAction", "text": "Save"}))
 
+    # A menu bar, because using a menu is press-on-the-bar and release-on-the-
+    # item -- indistinguishable from a drag unless the recorder knows better,
+    # and menu items are only findable while their menu is open.
+    menubar = window.add(FakeNode(["QMenuBar"] + WIDGET, {
+        "objectName": "menubar"}))
+    menu_options = menubar.add(FakeNode(["QMenu"] + WIDGET, {
+        "objectName": "menuOptions", "title": "Options"}))
+
     creds = root.add(FakeNode(GROUP, {
         "objectName": "credentialsGroup", "title": "Credentials"}))
 
@@ -72,5 +80,6 @@ def build_tree():
         "advanced": advanced, "duplicates": duplicates,
         "apply_a": apply_a, "apply_b": apply_b,
         "login": login, "status": status, "save_action": save_action,
+        "menubar": menubar, "menu_options": menu_options,
     }
     return FakeBackend([window]), nodes

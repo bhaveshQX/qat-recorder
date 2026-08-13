@@ -303,11 +303,23 @@ class NameResolver:
         return {"type": node_type} if node_type else dict(props)
 
     def _label(self, props, node) -> str:
+        """A human-readable name, used for generated constants and step text.
+
+        The same exclusion as `_bases`: on an editable input, `text` is what the
+        user typed, so naming a constant after it produces things like
+        `BHAVESH = {...}` for a search box — accurate about nothing and confusing
+        to read six months later.
+        """
+        node_type = _clean(props.get("type")) or self._type_of(node)
+        editable = is_editable(node_type or "", props)
+
         for key in ("objectName", "id") + TEXT_PROPERTIES + STABLE_PROPERTIES:
+            if editable and key == "text":
+                continue
             value = _clean(props.get(key))
             if value:
                 return value
-        return self._type_of(node) or "object"
+        return node_type or "object"
 
 
 def _weaken_to_moderate(robustness: Robustness) -> Robustness:

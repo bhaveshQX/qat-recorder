@@ -84,6 +84,36 @@ def test_right_click_becomes_context_click(session):
     assert recording.actions[-1].kind is ActionKind.CONTEXT_CLICK
 
 
+def test_opening_a_menu_becomes_two_clicks_not_a_drag(session):
+    """Menus are used by pressing on the bar and releasing on an item.
+
+    That looks exactly like a drag and is nothing like one: replaying a drag
+    across a menu bar opens nothing, so the item is never visible and the next
+    step fails with "Unable to find object". Observed on a real application.
+    """
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=40, y=10))
+    capture.feed(event("mouse_release", 1400, "QMenu", "menuOptions",
+                       button=1, x=60, y=90))
+    recording = capture.finish()
+
+    kinds = [a.kind for a in recording.actions]
+    assert ActionKind.DRAG not in kinds
+    assert kinds.count(ActionKind.CLICK) == 2
+    assert recording.actions[1].target.definition == {"objectName": "menubar"}
+    assert recording.actions[1].note == "opens the menu"
+    assert recording.actions[2].target.definition == {"objectName": "menuOptions"}
+
+
+def test_a_menu_action_release_is_also_two_clicks(session):
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar", button=1))
+    capture.feed(event("mouse_release", 1400, "QAction", "saveAction", button=1))
+    recording = capture.finish()
+    assert ActionKind.DRAG not in [a.kind for a in recording.actions]
+
+
 def test_release_far_from_its_press_becomes_a_drag(session):
     capture, _, _ = session
     capture.feed(event("mouse_press", 0, "QPushButton", "loginButton",

@@ -71,6 +71,16 @@ COMMAND_MODIFIERS = MOD_CONTROL | MOD_ALT | MOD_META
 
 BUTTON_NAMES = {1: "left", 2: "right", 4: "middle"}
 
+#: Menus are operated by pressing on the bar and releasing on an item, which
+#: looks exactly like a drag and is nothing like one.
+MENU_HINTS = ("Menu", "Action")
+
+
+def is_menu_interaction(press_class: str, release_class: str) -> bool:
+    """Whether a press/release across two widgets is a menu being used."""
+    return any(hint in (press_class or "") or hint in (release_class or "")
+               for hint in MENU_HINTS)
+
 # `is_editable` lives in naming.py, because the resolver needs the same
 # knowledge for a different reason: this module uses it to decide whether typed
 # characters end up in `text`, and the resolver uses it to decide whether `text`
@@ -355,6 +365,26 @@ class CaptureSession:
             self.recording.add(Action(
                 kind, target=target, args=self._button_args(pending.event),
                 t=self._elapsed(pending.event.t)))
+            return
+
+        # Press and release on different widgets. Usually a drag -- but a menu
+        # is the common exception, and getting it wrong makes the recording
+        # unreplayable.
+        if pending is not None and is_menu_interaction(
+                pending.event.target.cls, event.target.cls):
+            # Opening a menu is press-on-the-bar, move, release-on-the-item.
+            # That is two clicks, not a drag: replaying a drag across a menu bar
+            # opens nothing, so the item is never visible and the next step
+            # fails with "Unable to find object". Observed on a real
+            # application.
+            self.recording.add(Action(
+                ActionKind.CLICK, target=pending.target,
+                args=self._button_args(pending.event),
+                t=self._elapsed(pending.event.t),
+                note="opens the menu"))
+            self.recording.add(Action(
+                ActionKind.CLICK, target=target,
+                args=self._button_args(event), t=self._elapsed(event.t)))
             return
 
         # A release with no matching press: most likely a drag.
