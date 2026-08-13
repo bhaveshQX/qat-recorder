@@ -201,9 +201,14 @@ cmd_vm() {
     step "Python environment"
     make_venv
     "$PREFIX/bin/pip" install --quiet qat || fail "could not install qat"
+    # pytest is not needed to record, but it is needed to REPLAY a generated
+    # test -- and replaying is half the workflow, so install it here rather than
+    # letting the first replay fail with "No such file or directory".
+    "$PREFIX/bin/pip" install --quiet pytest \
+        || warn "pytest did not install; recording works, replaying needs it"
     "$PREFIX/bin/pip" install --quiet --force-reinstall --no-deps "$WHEEL" \
         || fail "could not install $WHEEL"
-    ok "qat + qat_recorder installed"
+    ok "qat + qat_recorder + pytest installed"
 
     step "Event filter"
     if "$PREFIX/bin/python" -m qat_recorder build-filter --out "$FILTER_DIR" \
