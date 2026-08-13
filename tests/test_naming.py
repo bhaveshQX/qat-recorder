@@ -5,7 +5,8 @@ import pytest
 
 from qat_recorder.ir import Robustness
 from qat_recorder.naming import (
-    I18N_WARNING, INDEX_WARNING, NameResolver, is_secret_field, summarise,
+    I18N_WARNING, INDEX_WARNING, NameResolver, is_editable, is_secret_field,
+    summarise,
 )
 from tests.fixtures import build_tree
 
@@ -182,6 +183,72 @@ def test_normal_and_missing_echomode_are_not_secret(value):
 
 def test_non_text_widget_is_not_secret():
     assert is_secret_field({"objectName": "button"}) is False
+
+
+# --- text as content versus text as identity -------------------------------
+
+@pytest.mark.parametrize("class_name", [
+    "QLineEdit", "QTextEdit", "QComboBox", "QSpinBox", "TextInput",
+    "LineEdit",             # qBittorrent's own QLineEdit subclass
+    "SearchLineEdit", "MyTextEdit",
+])
+def test_editable_inputs_are_recognised(class_name):
+    assert is_editable(class_name, {}) is True
+
+
+@pytest.mark.parametrize("class_name", [
+    "QLabel", "QPushButton", "QCheckBox", "QGroupBox", "QMenu",
+])
+def test_captions_are_not_editable(class_name):
+    assert is_editable(class_name, {}) is False
+
+
+def test_an_unknown_class_with_echomode_is_editable():
+    assert is_editable("AcmeWeirdInput", {"echoMode": "Normal"}) is True
+
+
+def test_an_editable_field_is_never_identified_by_its_contents():
+    """The bug this pins, seen on a real application:
+
+        LookupError: Unable to find object:
+            {"text":"bhavesh","type":"LineEdit"}
+
+    The user typed "bhavesh" into a search box, so at record time that text
+    uniquely identified the field. On replay the box is empty and the definition
+    matches nothing. Identifying an input by its contents is circular.
+    """
+    from qat_recorder.backend import FakeBackend, FakeNode
+
+    window = FakeNode(["QMainWindow", "QWidget"], {"objectName": "mainWindow"})
+    field = window.add(FakeNode(["LineEdit", "QLineEdit", "QWidget"],
+                                {"text": "bhavesh", "echoMode": "Normal"}))
+    backend = FakeBackend([window])
+
+    target = NameResolver(backend).resolve(field)
+    assert "text" not in target.definition, target.definition
+
+
+def test_placeholder_text_is_still_usable():
+    """Unlike `text`, placeholderText is set by the developer and does not
+    change as the user types."""
+    from qat_recorder.backend import FakeBackend, FakeNode
+
+    window = FakeNode(["QMainWindow", "QWidget"], {"objectName": "mainWindow"})
+    field = window.add(FakeNode(["QLineEdit", "QWidget"],
+                                {"text": "typed by the user",
+                                 "placeholderText": "Search…"}))
+    backend = FakeBackend([window])
+
+    target = NameResolver(backend).resolve(field)
+    assert target.definition.get("placeholderText") == "Search…"
+    assert "text" not in target.definition
+
+
+def test_a_caption_is_still_usable_for_a_label():
+    """The exclusion must apply only to editable inputs."""
+    backend, nodes = build_tree()
+    target = NameResolver(backend).resolve(nodes["import_btn"])
+    assert target.definition == {"type": "QPushButton", "text": "Import"}
 
 
 # --- reporting -------------------------------------------------------------

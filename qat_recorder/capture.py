@@ -34,7 +34,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
-from qat_recorder.naming import NameResolver, is_secret_field
+from qat_recorder.naming import NameResolver, is_editable, is_secret_field
 
 # Qt::Key values for keys that do not produce text.
 KEY_NAMES = {
@@ -71,26 +71,10 @@ COMMAND_MODIFIERS = MOD_CONTROL | MOD_ALT | MOD_META
 
 BUTTON_NAMES = {1: "left", 2: "right", 4: "middle"}
 
-#: Widgets whose `text` property holds user-entered content. Everything else --
-#: a QCheckBox, a QLabel, a QPushButton -- also has a `text` property, but it
-#: holds a caption. Reading that back as "what the user typed" produces steps
-#: like `type_in(rememberBox, "Remember me")`, which is nonsense and corrupts
-#: replay. Observed for real in the end-to-end run, where Tab moved focus from a
-#: password field onto a checkbox mid-typing.
-EDITABLE_CLASSES = frozenset({
-    "QLineEdit", "QTextEdit", "QPlainTextEdit", "QSpinBox", "QDoubleSpinBox",
-    "QComboBox", "QAbstractSpinBox", "QKeySequenceEdit",
-    "TextInput", "TextEdit", "TextField", "TextArea",
-})
-
-
-def is_editable(class_name: str, properties: Mapping[str, Any]) -> bool:
-    """Whether typed characters end up in this widget's `text` property."""
-    if class_name in EDITABLE_CLASSES:
-        return True
-    # QLineEdit and QML TextInput both expose echoMode; nothing that merely has
-    # a caption does.
-    return "echoMode" in properties
+# `is_editable` lives in naming.py, because the resolver needs the same
+# knowledge for a different reason: this module uses it to decide whether typed
+# characters end up in `text`, and the resolver uses it to decide whether `text`
+# may be used to identify the object at all. One definition, two consequences.
 
 
 def modifier_names(modifiers: int) -> list:

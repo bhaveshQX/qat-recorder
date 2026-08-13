@@ -31,6 +31,45 @@ TEXT_PROPERTIES = ("text", "title", "windowTitle", "placeholderText")
 #: Properties that identify an object and are not user-visible strings.
 STABLE_PROPERTIES = ("accessibleName", "name")
 
+# ---------------------------------------------------------------------------
+# Editable inputs
+#
+# On a label or a button, `text` is a caption: stable, and a reasonable (if
+# translation-fragile) way to identify the object. On an editable input it is
+# *content* -- whatever the user typed -- and using it as identity is circular.
+#
+# Observed on a real application: the recorder identified a search box as
+# {"type": "LineEdit", "text": "bhavesh"} because that is what had just been
+# typed into it. On replay the box was empty, so the definition matched nothing:
+#
+#   LookupError: Unable to find object: {"text":"bhavesh","type":"LineEdit"}
+#
+# `placeholderText` is *not* excluded -- that one is set by the developer and
+# does not change as the user types, so it is a genuinely useful identifier.
+# ---------------------------------------------------------------------------
+
+#: Exact class names whose `text` holds user-entered content.
+EDITABLE_CLASSES = frozenset({
+    "QLineEdit", "QTextEdit", "QPlainTextEdit", "QSpinBox", "QDoubleSpinBox",
+    "QComboBox", "QAbstractSpinBox", "QKeySequenceEdit",
+    "TextInput", "TextEdit", "TextField", "TextArea",
+})
+
+#: Suffixes, so application-specific subclasses are caught too. qBittorrent's
+#: search box is a QLineEdit subclass simply named `LineEdit`.
+EDITABLE_SUFFIXES = ("LineEdit", "TextEdit", "SpinBox", "ComboBox",
+                     "TextField", "TextArea", "TextInput")
+
+
+def is_editable(class_name: str, properties: Mapping[str, Any]) -> bool:
+    """Whether this object's `text` is something the user types into it."""
+    name = (class_name or "").strip()
+    if name in EDITABLE_CLASSES or name.endswith(EDITABLE_SUFFIXES):
+        return True
+    # Only editable inputs expose echoMode, so it is a reliable last resort for
+    # a subclass named something unexpected.
+    return "echoMode" in (properties or {})
+
 I18N_WARNING = "depends on visible text; will break under translation"
 INDEX_WARNING = "positional: breaks if siblings are added, removed or reordered"
 UNRESOLVED_WARNING = "no unique definition found; this step will not replay reliably"
@@ -156,7 +195,15 @@ class NameResolver:
                 yield ({"type": node_type, key: value},
                        f"type+{key}", Robustness.MODERATE, ())
 
+        # On an editable input, `text` is what the user typed, not what the
+        # object is. Identifying a field by its contents produces a definition
+        # that only matches while those contents are present -- which, on
+        # replay, they are not.
+        editable = is_editable(node_type or "", props)
+
         for key in TEXT_PROPERTIES:
+            if editable and key == "text":
+                continue
             value = _clean(props.get(key))
             if value and node_type:
                 yield ({"type": node_type, key: value},
