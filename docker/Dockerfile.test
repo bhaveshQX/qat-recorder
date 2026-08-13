@@ -1,0 +1,37 @@
+# Functional test environment for the qatrec event filter.
+#
+# Correctness first: this image exists to prove the filter captures real user
+# input and ignores programmatic input. Portable artifacts are a separate
+# concern, built by Dockerfile.build against an old glibc.
+#
+# xdotool matters here — it drives the X server, so the events it generates
+# arrive through the window system and are genuinely spontaneous. Nothing
+# in-process can fake that, which is why this is the only honest test.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        qt6-base-dev \
+        libgl1-mesa-dev \
+        xvfb \
+        xdotool \
+        x11-utils \
+        python3 \
+        python3-pip \
+        python3-venv \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Qat itself, so the end-to-end test can exercise both halves together:
+# the native filter capturing input, and Qat resolving what it captured.
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --quiet --upgrade pip \
+    && /opt/venv/bin/pip install --quiet qat pytest
+ENV PATH="/opt/venv/bin:${PATH}"
+
+WORKDIR /work
+CMD ["/bin/bash"]

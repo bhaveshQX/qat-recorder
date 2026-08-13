@@ -1,0 +1,51 @@
+# systemd unit for the recorder agent.
+#
+#   install -D -m644 deploy/qat-recorder-agent.service \
+#           /etc/systemd/system/qat-recorder-agent.service
+#   systemctl daemon-reload && systemctl enable --now qat-recorder-agent
+#
+# Runs as an unprivileged user, because the agent launches the application under
+# test and that application should not be root either. That user needs a session
+# it can put windows on -- see deploy/README.md.
+
+[Unit]
+Description=QAT Recorder agent
+Documentation=https://qat.readthedocs.io/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qatrec
+Group=qatrec
+
+Environment=QATREC_HOME=/etc/qatrec
+# The display the application under test will appear on. Recording is
+# interactive, so this must be a session a tester can actually see -- a VNC
+# server, or the machine's own desktop. Replay in CI can use :99 with Xvfb.
+Environment=DISPLAY=:0
+
+ExecStart=/opt/qatrec/venv/bin/qat-recorder-agent \
+    --token-file /etc/qatrec/token \
+    --cert /etc/qatrec/agent.crt \
+    --key /etc/qatrec/agent.key \
+    --bind 0.0.0.0 \
+    --port 8765
+
+Restart=on-failure
+RestartSec=5
+
+# The agent launches processes by design, so the blast radius is limited rather
+# than pretended away: it gets no new privileges, a private /tmp, and read-only
+# access to the rest of the system apart from where recordings are written.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/qatrec
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

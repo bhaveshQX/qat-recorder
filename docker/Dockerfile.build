@@ -1,0 +1,31 @@
+# Portable build environment.
+#
+# Build against the OLDEST target, because old-built runs on new and new-built
+# does not run on old. Building on Ubuntu 24.04 produced an artifact requiring
+# GLIBC_2.38, which would refuse to load on RHEL 9, Rocky 9 or Ubuntu 22.04 --
+# precisely the fragmentation that makes upstream's own Qt 6.8+ libraries
+# unusable across this distro range.
+#
+# AlmaLinux 8 is binary-compatible with RHEL 8: glibc 2.28, and the only Qt that
+# distribution ships is 5.15. AlmaLinux 9 (glibc 2.34) covers RHEL/Rocky 9;
+# Qt 6 is not in its AppStream, so EPEL supplies 6.6.
+#
+#   docker build -f docker/Dockerfile.build \
+#       --build-arg BASE=almalinux:8 --build-arg QT_PKG=qt5-qtbase-devel .
+#   docker build -f docker/Dockerfile.build \
+#       --build-arg BASE=almalinux:9 --build-arg QT_PKG=qt6-qtbase-devel .
+
+ARG BASE=almalinux:9
+FROM ${BASE}
+
+ARG QT_PKG=qt6-qtbase-devel
+
+RUN dnf -y install dnf-plugins-core \
+    && (dnf config-manager --set-enabled crb || dnf config-manager --set-enabled powertools || true) \
+    && (dnf -y install epel-release || true) \
+    && dnf -y install gcc gcc-c++ make cmake ${QT_PKG} binutils \
+    && dnf -y install libstdc++-static libstdc++-devel \
+    && dnf clean all
+
+WORKDIR /work
+CMD ["/bin/bash"]
