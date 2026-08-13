@@ -130,16 +130,25 @@ def _call_for(action, constants: dict) -> list:
     if action.args.get("modifiers"):
         extra += f"  # with {action.args['modifiers']}"
 
+    # Coordinates are recorded only for widgets where the position decides the
+    # outcome -- a menu bar, a tab bar, a table header. Qat clicks the centre of
+    # a widget otherwise, which for a full-width menu bar is empty space.
+    position = ""
+    if "x" in action.args and "y" in action.args:
+        position = f", {action.args['x']}, {action.args['y']}"
+
     if action.kind is ActionKind.CLICK:
         button = action.args.get("button")
         if button == "right":
-            lines.append(f"    qat.mouse_click({target}, button=qat.Button.RIGHT){extra}")
+            lines.append(
+                f"    qat.mouse_click({target}{position}, button=qat.Button.RIGHT){extra}")
         else:
-            lines.append(f"    qat.mouse_click({target}){extra}")
+            lines.append(f"    qat.mouse_click({target}{position}){extra}")
     elif action.kind is ActionKind.CONTEXT_CLICK:
-        lines.append(f"    qat.mouse_click({target}, button=qat.Button.RIGHT){extra}")
+        lines.append(
+            f"    qat.mouse_click({target}{position}, button=qat.Button.RIGHT){extra}")
     elif action.kind is ActionKind.DOUBLE_CLICK:
-        lines.append(f"    qat.double_click({target}){extra}")
+        lines.append(f"    qat.double_click({target}{position}){extra}")
     elif action.kind is ActionKind.TYPE:
         lines.append(f"    qat.type_in({target}, {_render(action.args.get('text', ''))})")
     elif action.kind is ActionKind.KEY:

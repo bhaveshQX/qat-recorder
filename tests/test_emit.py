@@ -102,6 +102,25 @@ def test_definitions_become_named_constants(recording):
     assert "LOGINBUTTON = {'objectName': 'loginButton'}" in source
 
 
+def test_position_sensitive_clicks_carry_coordinates():
+    """A menu bar must be clicked where the title is, not in its centre."""
+    backend, nodes = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=42, y=11))
+    capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
+                       button=1, x=42, y=11))
+
+    source = emit_python(capture.finish())
+    assert "qat.mouse_click(MENUBAR, 42, 11)" in source
+    compile(source, "generated.py", "exec")
+
+
+def test_ordinary_clicks_carry_no_coordinates(recording):
+    source = emit_python(recording)
+    assert "qat.mouse_click(LOGINBUTTON)" in source
+
+
 def test_emitting_an_invalid_recording_is_refused():
     broken = Recording(app="x")
     broken.add(Action(ActionKind.CLICK, target=None))

@@ -106,6 +106,54 @@ def test_opening_a_menu_becomes_two_clicks_not_a_drag(session):
     assert recording.actions[2].target.definition == {"objectName": "menuOptions"}
 
 
+def test_a_menu_bar_click_keeps_its_coordinates(session):
+    """Menu titles are painted by the bar, not child widgets.
+
+    Qat clicks the centre of a widget, and a menu bar spans the window — its
+    centre is empty space, so the menu never opens and the following step fails
+    looking for an item that was never shown.
+    """
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=42, y=11))
+    capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
+                       button=1, x=42, y=11))
+    recording = capture.finish()
+
+    click = recording.actions[-1]
+    assert click.kind is ActionKind.CLICK
+    assert click.args["x"] == 42
+    assert click.args["y"] == 11
+
+
+def test_an_ordinary_button_click_has_no_coordinates(session):
+    """Recording positions everywhere would make every step depend on layout."""
+    capture, _, _ = session
+    capture.feed_all(click_pair(1000, "QPushButton", "loginButton", x=17, y=9))
+    recording = capture.finish()
+
+    click = recording.actions[-1]
+    assert "x" not in click.args
+    assert "y" not in click.args
+
+
+@pytest.mark.parametrize("class_name", [
+    "QMenuBar", "QTabBar", "QHeaderView", "QSlider", "QScrollBar",
+    "QTreeWidget", "QTableView", "TransferListWidget", "MyCustomListView",
+])
+def test_position_sensitive_widgets_are_recognised(class_name):
+    from qat_recorder.capture import is_position_sensitive
+    assert is_position_sensitive(class_name) is True
+
+
+@pytest.mark.parametrize("class_name", [
+    "QPushButton", "QCheckBox", "QLineEdit", "QLabel", "QGroupBox",
+])
+def test_ordinary_widgets_are_not_position_sensitive(class_name):
+    from qat_recorder.capture import is_position_sensitive
+    assert is_position_sensitive(class_name) is False
+
+
 def test_a_menu_action_release_is_also_two_clicks(session):
     capture, _, _ = session
     capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar", button=1))

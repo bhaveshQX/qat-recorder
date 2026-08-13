@@ -81,6 +81,39 @@ def is_menu_interaction(press_class: str, release_class: str) -> bool:
     return any(hint in (press_class or "") or hint in (release_class or "")
                for hint in MENU_HINTS)
 
+
+# ---------------------------------------------------------------------------
+# Position-sensitive widgets
+#
+# Clicking the centre of a widget is right for a button and wrong for a menu
+# bar: menu titles are painted by the bar itself rather than being child
+# widgets, so the only way to hit "Tools" is the coordinate where it was hit
+# during recording. A menu bar spans the window, and its centre is usually
+# empty space -- clicking there opens nothing, and the next step then fails
+# looking for a menu item that was never shown.
+#
+# The same applies to tab bars, table headers, sliders and item views: the
+# widget is one object, but which part of it you press decides what happens.
+# ---------------------------------------------------------------------------
+
+POSITION_SENSITIVE_CLASSES = frozenset({
+    "QMenuBar", "QMenu", "QTabBar", "QHeaderView", "QSlider", "QScrollBar",
+    "QDial", "QCalendarWidget", "QAbstractItemView", "QAbstractSlider",
+})
+
+POSITION_SENSITIVE_SUFFIXES = (
+    "MenuBar", "TabBar", "HeaderView", "ItemView",
+    "ListView", "TreeView", "TableView",
+    "ListWidget", "TreeWidget", "TableWidget",
+)
+
+
+def is_position_sensitive(class_name: str) -> bool:
+    """Whether *where* you clicked decides what the click does."""
+    name = (class_name or "").strip()
+    return name in POSITION_SENSITIVE_CLASSES or \
+        name.endswith(POSITION_SENSITIVE_SUFFIXES)
+
 # `is_editable` lives in naming.py, because the resolver needs the same
 # knowledge for a different reason: this module uses it to decide whether typed
 # characters end up in `text`, and the resolver uses it to decide whether `text`
@@ -519,6 +552,13 @@ class CaptureSession:
         modifiers = modifier_names(event.modifiers)
         if modifiers:
             args["modifiers"] = "+".join(modifiers)
+
+        # Keep the coordinates only where they decide the outcome. Recording
+        # them everywhere would make every step depend on layout; recording them
+        # nowhere means a menu bar gets clicked in its empty middle.
+        if is_position_sensitive(event.target.cls):
+            args["x"] = event.x
+            args["y"] = event.y
         return args
 
     def _resolve(self, locator: Locator):
