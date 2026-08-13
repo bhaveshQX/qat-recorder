@@ -42,6 +42,12 @@ OBJECTS = {{
 {objects}
 }}
 
+#: Where the application lives. `qat.start_application()` takes a registered
+#: NAME, not a path, so without this the first run on any machine other than the
+#: recording one fails with "Application '...' is not defined in configuration
+#: file 'applications.json'".
+APP_PATH = {app_path!r}
+
 
 def secret(name):
     """Look up a value the recorder deliberately did not write to disk."""
@@ -66,6 +72,8 @@ def obj(label):
 
 @given('the application "{{name}}" is running')
 def step_start_application(context, name):
+    if APP_PATH and name not in qat.list_applications():
+        qat.register_application(name, APP_PATH)
     context.app = qat.start_application(name)
 
 
@@ -211,4 +219,5 @@ def emit_steps(recording: Recording, source: str = "recording.json") -> str:
             f'    "{label}": {{"definition": {definition!r}, '
             f'"index": {action.target.index!r}}},')
 
-    return STEPS_HEADER.format(source=source, objects="\n".join(entries))
+    return STEPS_HEADER.format(source=source, objects="\n".join(entries),
+                               app_path=recording.meta.get("app_path", ""))

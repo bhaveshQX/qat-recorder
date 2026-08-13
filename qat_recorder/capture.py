@@ -182,10 +182,17 @@ class CaptureSession:
 
     def __init__(self, backend, app_name: str = "app",
                  resolver: Optional[NameResolver] = None,
-                 group_ms: int = 8, click_ms: int = 1200):
+                 group_ms: int = 8, click_ms: int = 1200,
+                 app_path: str = ""):
         self.backend = backend
         self.resolver = resolver or NameResolver(backend)
         self.recording = Recording(app=app_name)
+        # The executable, kept so generated tests can register the application
+        # themselves. `qat.start_application()` takes a registered NAME, not a
+        # path, so a generated test that only knows the name fails with
+        # "Application '...' is not defined in configuration file".
+        if app_path:
+            self.recording.meta["app_path"] = str(app_path)
         self.group_ms = group_ms
         self.click_ms = click_ms
 

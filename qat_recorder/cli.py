@@ -161,7 +161,13 @@ def _cmd_record(args) -> int:
         events = receiver.drain(timeout=1.0)
         print(f"captured {len(events)} raw event(s)")
 
-        session = CaptureSession(QatBackend(qat), app_name=args.name or args.app)
+        # The name identifies the application in generated code; the path lets
+        # that code register it. Defaulting the name to the executable's
+        # basename rather than its full path keeps the generated test readable.
+        session = CaptureSession(
+            QatBackend(qat),
+            app_name=args.name or Path(args.app).name,
+            app_path=args.app)
         session.feed_all(events)
         recording = session.finish()
     finally:

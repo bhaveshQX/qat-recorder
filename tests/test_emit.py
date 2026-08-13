@@ -21,7 +21,7 @@ def recording():
     nodes["username"].props["text"] = "alice"
     nodes["password"].props["text"] = "hunter2"
 
-    capture = CaptureSession(backend, app_name="sample")
+    capture = CaptureSession(backend, app_name="sample", app_path="/opt/acme/sample")
     capture.feed(event("key_press", 1000, "QLineEdit", "usernameField", key=ord("A")))
     capture.feed(event("key_press", 1600, "QLineEdit", "passwordField", key=ord("H")))
     capture.feed_all(click_pair(2200, "QPushButton", "loginButton"))
@@ -41,9 +41,41 @@ def test_generated_python_compiles(recording):
 def test_generated_python_uses_qat_api(recording):
     source = emit_python(recording)
     assert "import qat" in source
-    assert "qat.start_application('sample')" in source
+    assert "qat.start_application(APP_NAME)" in source
     assert "qat.mouse_click(" in source
     assert "qat.type_in(" in source
+
+
+def test_generated_test_registers_the_application_itself(recording):
+    """`start_application` takes a registered NAME, not a path.
+
+    Without registration the generated test fails on every machine except the
+    one it was recorded on, with "Application '...' is not defined in
+    configuration file 'applications.json'". Found on a real VM.
+    """
+    source = emit_python(recording)
+    assert "APP_NAME = 'sample'" in source
+    assert "APP_PATH = '/opt/acme/sample'" in source
+    assert "if APP_NAME not in qat.list_applications():" in source
+    assert "qat.register_application(APP_NAME, APP_PATH)" in source
+    compile(source, "generated.py", "exec")
+
+
+def test_generated_steps_register_the_application_too(recording):
+    steps = emit_steps(recording)
+    assert "APP_PATH = '/opt/acme/sample'" in steps
+    assert "qat.register_application(name, APP_PATH)" in steps
+    compile(steps, "steps.py", "exec")
+
+
+def test_a_recording_without_a_path_still_emits(recording):
+    """Older recordings have no app_path; they must still generate, just
+    without the self-registration convenience."""
+    recording.meta.pop("app_path", None)
+    source = emit_python(recording)
+    assert "qat.start_application(APP_NAME)" in source
+    assert "register_application" not in source
+    compile(source, "generated.py", "exec")
 
 
 def test_secrets_never_appear_as_literals(recording):

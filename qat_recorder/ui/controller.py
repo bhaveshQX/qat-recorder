@@ -178,7 +178,8 @@ class RecorderController:
             from qat_recorder.backend import QatBackend  # noqa: PLC0415
             self._backend = QatBackend(self.qat)
 
-        self.session = CaptureSession(self._backend, app_name=self.app_name)
+        self.session = CaptureSession(self._backend, app_name=self.app_name,
+                                      app_path=self.app_path)
         self.events_seen = 0
         self.events_dropped = 0
         self._set_state(State.RECORDING)

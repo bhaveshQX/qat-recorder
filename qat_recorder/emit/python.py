@@ -188,9 +188,23 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
         out.append("")
 
     out.append("")
+    out.append(f"APP_NAME = {recording.app!r}")
+    app_path = recording.meta.get("app_path", "")
+    if app_path:
+        out.append(f"APP_PATH = {app_path!r}")
+    out.append("")
+    out.append("")
     out.append("@pytest.fixture()")
     out.append("def application():")
-    out.append(f"    context = qat.start_application({recording.app!r})")
+    if app_path:
+        # Register it here rather than expecting the operator to have done so.
+        # `start_application` takes a registered NAME, so a test that only knows
+        # the name fails with "Application '...' is not defined in configuration
+        # file 'applications.json'" on any machine where it was not registered
+        # first -- which is every machine except the one it was recorded on.
+        out.append("    if APP_NAME not in qat.list_applications():")
+        out.append("        qat.register_application(APP_NAME, APP_PATH)")
+    out.append("    context = qat.start_application(APP_NAME)")
     out.append("    yield context")
     out.append("    qat.close_application(context)")
     out.append("")
