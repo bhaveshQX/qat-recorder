@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qat-recorder"
+version = "0.1.0"
+description = "Record-and-playback tooling built on Qat (Qt Application Tester)"
+requires-python = ">=3.9"
+dependencies = ["qat>=1.7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "PySide6-Essentials"]
+# The control panel is the only part that needs Qt bindings in the recorder
+# process itself; capture, generation and replay do not.
+ui = ["PySide6-Essentials"]
+
+[project.scripts]
+qat-recorder = "qat_recorder.cli:main"
+# Runs on the VM beside the application. Needs only the standard library and
+# `qat` -- no web framework, so it installs on a locked-down host.
+qat-recorder-agent = "qat_recorder.agent.cli:main"
+
+[project.gui-scripts]
+qat-recorder-panel = "qat_recorder.ui.panel:main"
+
+[tool.setuptools.packages.find]
+include = ["qat_recorder*"]
+
+[tool.setuptools.package-data]
+# The launcher wrapper and the C++ source are both needed at runtime on the VM,
+# so they must travel inside the wheel rather than being found relative to a
+# source checkout.
+qat_recorder = ["resources/*.sh", "resources/native/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+markers = ["live: requires a running application under test (needs --live)"]
