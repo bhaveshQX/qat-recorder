@@ -187,16 +187,38 @@ cmd_vm() {
     detect_qt
 
     step "System packages"
-    local wanted=()
-    wanted+=("$(pkg_for compiler)")
-    wanted+=("$(pkg_for cmake)")
-    wanted+=("$(pkg_for "qt$QT_MAJOR")")
-    local extra
-    extra=$(pkg_for staticcxx); [ -n "$extra" ] && wanted+=("$extra")
-    extra=$(pkg_for "qml$QT_MAJOR"); [ -n "$extra" ] && wanted+=("$extra")
-    local filtered=(); for p in "${wanted[@]}"; do [ -n "$p" ] && filtered+=("$p"); done
-    printf '    installing: %s\n' "${filtered[*]}"
-    pkg_install "${filtered[@]}" || warn "some packages failed; continuing"
+    # Required and optional are installed separately. Bundling them means one
+    # unavailable optional package makes dnf fail the whole transaction and
+    # print a red Error, which reads like the install broke when it did not --
+    # libstdc++-static, for instance, lives in RHEL's CodeReady Builder repo and
+    # is often simply unreachable.
+    local required=()
+    for role in compiler cmake "qt$QT_MAJOR"; do
+        local p; p=$(pkg_for "$role"); [ -n "$p" ] && required+=("$p")
+    done
+    printf '    required: %s\n' "${required[*]}"
+    pkg_install "${required[@]}" || fail "could not install the build tools"
+
+    local staticcxx qml
+    staticcxx=$(pkg_for staticcxx)
+    if [ -n "$staticcxx" ]; then
+        if pkg_install "$staticcxx" > /dev/null 2>&1; then
+            ok "$staticcxx (portable builds possible)"
+        else
+            warn "$staticcxx unavailable — harmless: it is only needed to build"
+            warn "  a filter that runs on OTHER machines; this one links"
+            warn "  libstdc++ dynamically and works fine here"
+        fi
+    fi
+
+    qml=$(pkg_for "qml$QT_MAJOR")
+    if [ -n "$qml" ]; then
+        if pkg_install "$qml" > /dev/null 2>&1; then
+            ok "$qml (QML applications visible)"
+        else
+            warn "$qml unavailable — QML objects will NOT be visible to Qat"
+        fi
+    fi
 
     step "Python environment"
     make_venv
