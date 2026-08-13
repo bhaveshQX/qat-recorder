@@ -1,0 +1,382 @@
+# -*- coding: utf-8 -*-
+"""
+Session controller — all the recording logic, no Qt.
+
+The widgets in `panel.py` are deliberately thin: everything that can go wrong
+lives here, where it can be tested without a display, a running application, or
+a human. Same seam as the backend port in Phase 1, for the same reason.
+
+Checkpoint insertion uses our own click stream rather than Qat's picker.
+`qat.activate_picker()` only toggles a server-side mode; it gives the client no
+way to learn *what* was picked, so building on it would be guesswork. Instead,
+"add checkpoint" arms picking, and the next click in the application selects a
+target rather than being recorded as an action. That reuses the resolver we
+already trust and needs no new mechanism.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import stat
+import tempfile
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from qat_recorder.capture import CaptureSession
+from qat_recorder.events import RawEvent
+from qat_recorder.ir import Action, ActionKind, Recording, Robustness
+
+
+def default_wrapper() -> Path:
+    """Path to the launcher wrapper, shipped inside the package.
+
+    It must be found the same way whether this is a source checkout or a wheel
+    installed on a VM — an earlier version resolved it relative to the repository
+    layout, which pointed into site-packages once installed and left the file
+    missing entirely.
+
+    Wheels do not reliably preserve the executable bit, so it is restored here.
+    If the install is read-only, a copy is staged in the temporary directory.
+    """
+    packaged = Path(__file__).resolve().parents[1] / "resources" / "wrapper.sh"
+    if not packaged.exists():
+        raise FileNotFoundError(
+            f"launcher wrapper missing from the installation ({packaged})")
+
+    if os.access(packaged, os.X_OK):
+        return packaged
+
+    try:
+        packaged.chmod(packaged.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP
+                       | stat.S_IXOTH)
+        if os.access(packaged, os.X_OK):
+            return packaged
+    except OSError:
+        pass
+
+    staged = Path(tempfile.gettempdir()) / "qatrec-wrapper.sh"
+    shutil.copyfile(packaged, staged)
+    staged.chmod(0o755)
+    return staged
+
+
+class State(str, Enum):
+    IDLE = "idle"
+    RECORDING = "recording"
+    PAUSED = "paused"
+    PICKING = "picking"
+    STOPPED = "stopped"
+
+
+class ControllerError(RuntimeError):
+    """A transition that does not make sense in the current state."""
+
+
+class RecorderController:
+    def __init__(
+        self,
+        qat_module,
+        lib_path: str = "",
+        app_path: str = "",
+        app_name: str = "app",
+        wrapper: Optional[str] = None,
+        backend=None,
+        receiver=None,
+        on_state: Optional[Callable[[State], None]] = None,
+        on_action: Optional[Callable[[Action], None]] = None,
+        on_picked: Optional[Callable[[Any, dict], None]] = None,
+        on_error: Optional[Callable[[str], None]] = None,
+    ):
+        self.qat = qat_module
+        self.lib_path = lib_path
+        self.app_path = app_path
+        self.app_name = app_name
+        self.wrapper = wrapper or str(default_wrapper())
+
+        self._backend = backend
+        self._receiver = receiver
+        self._owns_receiver = receiver is None
+
+        self.on_state = on_state
+        self.on_action = on_action
+        self.on_picked = on_picked
+        self.on_error = on_error
+
+        self._state = State.IDLE
+        self.session: Optional[CaptureSession] = None
+        self.context = None
+        self.registered_name = "_qat_recorder_session"
+
+        self.events_seen = 0
+        self.events_dropped = 0
+        self._drop_next_release = False
+        self.picked_target = None
+        self.picked_node = None
+        self.picked_properties: dict = {}
+
+    # -- state -------------------------------------------------------------
+
+    @property
+    def location(self) -> str:
+        """Where the application under test runs. Local, here."""
+        return "this machine"
+
+    def configure(self, app_path: str, lib_path: str, app_name: str) -> None:
+        """Adopt paths chosen in the UI before starting.
+
+        Present on the remote controller too, so the panel can set up a session
+        without knowing which kind it holds.
+        """
+        self.app_path = app_path
+        self.lib_path = lib_path
+        self.app_name = app_name or self.app_name
+
+    @property
+    def state(self) -> State:
+        return self._state
+
+    def _set_state(self, state: State) -> None:
+        if state == self._state:
+            return
+        self._state = state
+        if self.on_state:
+            self.on_state(state)
+
+    @property
+    def recording(self) -> Optional[Recording]:
+        return self.session.recording if self.session else None
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def start(self) -> None:
+        if self._state not in (State.IDLE, State.STOPPED):
+            raise ControllerError(f"cannot start while {self._state.value}")
+
+        if self._owns_receiver:
+            from qat_recorder.events import EventReceiver  # noqa: PLC0415
+            self._receiver = EventReceiver(port=0)
+        self._receiver.start()
+
+        os.environ["QATREC_PORT"] = str(self._receiver.actual_port)
+        os.environ["QATREC_LIB"] = self.lib_path
+        os.environ["QATREC_APP"] = self.app_path
+
+        # Qat locks the application's UI during a test run so stray input cannot
+        # corrupt it. While recording that is exactly backwards -- it would block
+        # the input being captured.
+        try:
+            self.qat.test_settings.Settings.lock_ui = "never"
+        except AttributeError:
+            pass
+
+        self.qat.register_application(self.registered_name, self.wrapper, "")
+        self.context = self.qat.start_application(self.registered_name)
+
+        if self._backend is None:
+            from qat_recorder.backend import QatBackend  # noqa: PLC0415
+            self._backend = QatBackend(self.qat)
+
+        self.session = CaptureSession(self._backend, app_name=self.app_name)
+        self.events_seen = 0
+        self.events_dropped = 0
+        self._set_state(State.RECORDING)
+
+    def stop(self) -> Optional[Recording]:
+        if self._state is State.IDLE:
+            raise ControllerError("nothing to stop")
+        self.poll()
+        recording = None
+        if self.session is not None:
+            before = len(self.session.recording.actions)
+            recording = self.session.finish()
+            self._emit_new_actions(before)
+
+        if self._receiver is not None:
+            self._receiver.stop()
+        try:
+            if self.context is not None:
+                self.qat.close_application(self.context)
+        except Exception as error:                            # noqa: BLE001
+            self._report(f"could not close the application: {error}")
+        finally:
+            self.context = None
+            try:
+                self.qat.unregister_application(self.registered_name)
+            except Exception:                                 # noqa: BLE001
+                pass
+
+        self._set_state(State.STOPPED)
+        return recording
+
+    def pause(self) -> None:
+        if self._state is not State.RECORDING:
+            raise ControllerError(f"cannot pause while {self._state.value}")
+        self.poll()
+        self._set_state(State.PAUSED)
+
+    def resume(self) -> None:
+        if self._state is not State.PAUSED:
+            raise ControllerError(f"cannot resume while {self._state.value}")
+        # Anything that happened while paused is deliberately discarded.
+        self._discard_pending()
+        self._set_state(State.RECORDING)
+
+    # -- the event pump ----------------------------------------------------
+
+    def poll(self) -> int:
+        """Drain the receiver and process what arrived. Call this on a timer."""
+        if self._receiver is None or self._state in (State.IDLE, State.STOPPED):
+            return 0
+
+        handled = 0
+        for event in self._receiver.drain():
+            self.events_seen += 1
+            handled += 1
+            self._process(event)
+
+        # Close any interaction that is old enough that nothing more can belong
+        # to it, so the operator sees each action as they perform it rather than
+        # one behind.
+        if self._state is State.RECORDING and self.session is not None:
+            before = len(self.session.recording.actions)
+            if self.session.flush_stale():
+                self._emit_new_actions(before)
+        return handled
+
+    def _process(self, event: RawEvent) -> None:
+        if self._state is State.PAUSED:
+            self.events_dropped += 1
+            return
+
+        # A click consumed to select a checkpoint target must not also be
+        # recorded, and neither must its release -- otherwise the folder sees a
+        # release with no press and invents a drag.
+        if self._drop_next_release and event.kind == "mouse_release":
+            self._drop_next_release = False
+            self.events_dropped += 1
+            return
+
+        if self._state is State.PICKING:
+            self.events_dropped += 1
+            if event.kind == "mouse_press":
+                self._pick(event)
+            return
+
+        before = len(self.session.recording.actions)
+        self.session.feed(event)
+        self._emit_new_actions(before)
+
+    def _emit_new_actions(self, before: int) -> None:
+        if not self.on_action:
+            return
+        for action in self.session.recording.actions[before:]:
+            self.on_action(action)
+
+    # -- checkpoints -------------------------------------------------------
+
+    def arm_checkpoint(self) -> None:
+        if self._state is not State.RECORDING:
+            raise ControllerError(f"cannot pick while {self._state.value}")
+        self.picked_target = None
+        self.picked_node = None
+        self.picked_properties = {}
+        self._set_state(State.PICKING)
+
+    def cancel_checkpoint(self) -> None:
+        if self._state is not State.PICKING:
+            return
+        self._set_state(State.RECORDING)
+
+    def _pick(self, event: RawEvent) -> None:
+        self._drop_next_release = True
+        resolved = self.session.resolve_locator(event.target)
+        self._set_state(State.RECORDING)
+        if resolved is None:
+            self._report("that object could not be identified; nothing to check")
+            return
+        node, target = resolved
+        self.picked_node = node
+        self.picked_target = target
+        self.picked_properties = self.session.properties_of(node)
+        if self.on_picked:
+            self.on_picked(target, self.picked_properties)
+
+    def add_checkpoint(self, property_name: str,
+                       expected: Any = None) -> Optional[Action]:
+        """Insert a verification against the object picked most recently."""
+        if self.picked_target is None:
+            raise ControllerError("nothing has been picked yet")
+        if expected is None:
+            expected = self.picked_properties.get(property_name)
+
+        before = len(self.session.recording.actions)
+        action = self.session.recording.add(Action(
+            ActionKind.VERIFY_PROPERTY,
+            target=self.picked_target,
+            args={"property": property_name, "expected": expected},
+            t=self.session.recording.actions[-1].t
+            if self.session.recording.actions else 0.0,
+        ))
+        self._emit_new_actions(before)
+        return action
+
+    def drop_last_action(self) -> Optional[Action]:
+        """Undo — the operator misclicked, which happens constantly."""
+        if not self.session or len(self.session.recording.actions) <= 1:
+            return None
+        return self.session.recording.actions.pop()
+
+    # -- output ------------------------------------------------------------
+
+    def summary(self) -> dict:
+        recording = self.recording
+        actions = recording.actions if recording else []
+        weak = [a for a in actions
+                if a.target and a.target.robustness.rank >= Robustness.WEAK.rank]
+        return {
+            "state": self._state.value,
+            "events": self.events_seen,
+            "dropped": self.events_dropped,
+            "actions": max(0, len(actions) - 1),      # the LAUNCH is bookkeeping
+            "unresolved": self.session.unresolved if self.session else 0,
+            "fragile": len(weak),
+            "secrets": len(recording.secrets()) if recording else 0,
+        }
+
+    def save(self, out_dir: str) -> list:
+        from qat_recorder.emit import (  # noqa: PLC0415
+            emit_gherkin, emit_python, emit_steps)
+
+        recording = self.recording
+        if recording is None:
+            raise ControllerError("nothing recorded")
+        problems = recording.validate()
+        if problems:
+            raise ControllerError("recording is not valid: " + "; ".join(problems))
+
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        written = []
+        for name, text in (
+            ("recording.json", recording.dumps()),
+            ("test_recorded.py", emit_python(recording)),
+            ("recorded.feature", emit_gherkin(recording)),
+            ("steps.py", emit_steps(recording)),
+        ):
+            path = out / name
+            path.write_text(text, encoding="utf-8")
+            written.append(str(path))
+        return written
+
+    # -- helpers -----------------------------------------------------------
+
+    def _discard_pending(self) -> None:
+        if self._receiver is not None:
+            dropped = len(self._receiver.drain())
+            self.events_dropped += dropped
+
+    def _report(self, message: str) -> None:
+        if self.on_error:
+            self.on_error(message)

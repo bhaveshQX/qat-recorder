@@ -1,0 +1,33 @@
+# Build output
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Compiled filter
+native/build/
+native/dist/
+*.so
+*.o
+
+# Test and tooling artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Recorded sessions (regenerate from recording.json instead of committing output)
+recorded/
+generated/
+spike/phase0-results-*.json
+spike/e2e_recording.json
+
+# Local configuration that should never be shared
+*.token
+*.key
+*.crt
+hosts.json
