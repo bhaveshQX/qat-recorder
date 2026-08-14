@@ -105,9 +105,74 @@ def describe(locator: Locator) -> str:
             + (f" in {where}" if where else ""))
 
 
+# ---------------------------------------------------------------------------
+# Qt's own widgets
+#
+# A Qt widget is built from other widgets. A tree view owns a viewport, two
+# scrollbars and a container for each; a tab widget owns a stacked widget; a
+# spin box owns a line edit. Qt names them itself, with a `qt_` prefix, and a
+# person never clicks one on purpose -- they click *through* it, at the control
+# that owns it.
+#
+# Recording them as targets is how a real session produced
+# `mouse_click({"objectName": "qt_scrollarea_vcontainer", ...})`, which failed on
+# replay because Qt only creates that container while a scrollbar is needed and
+# only shows it while one is shown. The audit has classified these as internal
+# since Phase 1; capture simply never used what the audit knew.
+#
+# They divide in two, and the halves want opposite treatment:
+#
+#   surface   the widget you click *through* -- a viewport, a stacked page, the
+#             line edit inside a spin box. The event belongs to the control that
+#             owns it, so the target is promoted to that owner.
+#   chrome    scrollbars, their containers, overflow buttons. Operating one
+#             scrolls; it is not a step in a test, and the widget itself comes
+#             and goes with the content. Dropped.
+# ---------------------------------------------------------------------------
+
+INTERNAL_PREFIXES = ("qt_", "_q_")
+
+CHROME_CLASSES = frozenset({"QScrollBar", "QSizeGrip", "QSplitterHandle"})
+
+CHROME_MARKERS = ("vcontainer", "hcontainer", "scrollbar", "_ext_button")
+
+
+def is_internal(object_name: str) -> bool:
+    """Whether Qt named this widget rather than the application."""
+    return (object_name or "").strip().startswith(INTERNAL_PREFIXES)
+
+
+def is_chrome(class_name: str, object_name: str) -> bool:
+    """Whether operating this scrolls or resizes rather than doing something."""
+    if (class_name or "").strip() in CHROME_CLASSES:
+        return True
+    name = (object_name or "").strip().lower()
+    return is_internal(name) and any(mark in name for mark in CHROME_MARKERS)
+
+
+def owner_of(locator: Locator) -> Optional[Locator]:
+    """The nearest ancestor that belongs to the application, not to Qt.
+
+    Built from the ancestor chain the native filter already reports, so it costs
+    no round trip and cannot disagree with what the event actually hit.
+    """
+    for index, (cls, object_name) in enumerate(locator.path):
+        if is_internal(object_name) or is_chrome(cls, object_name):
+            continue
+        return Locator(cls=cls, object_name=object_name,
+                       path=locator.path[index + 1:])
+    return None
+
+
 #: Why an event could not be turned into a step.
 NOT_FINDABLE = ("could not be found through Qat while it was on screen -- "
                 "usually hidden, on another tab, or already destroyed")
+
+CHROME = ("a scrollbar or window furniture; scrolling is not a step, and the "
+          "widget only exists while the content needs it")
+
+NO_OWNER = ("one of Qt's own internal widgets, with no application widget "
+            "above it to attribute the click to")
 NOT_UNIQUE = ("no definition identifies it uniquely, not even by position; "
               "it needs an objectName in the application")
 
@@ -218,6 +283,9 @@ class _Pending:
     event: RawEvent
     target: Target
     node: Any
+    #: Anything the resulting step should admit about itself, decided when the
+    #: press was resolved rather than when the release arrives.
+    note: str = ""
 
 
 class CaptureSession:
@@ -251,6 +319,7 @@ class CaptureSession:
         self._typing_t: int = 0
         self._resolved_cache: dict = {}
         self._last_reason: str = ""
+        self._last_note: str = ""
         self.unresolved = 0
         #: Human-readable reasons individual events were dropped, so the count
         #: is explicable rather than mysterious.
@@ -407,12 +476,13 @@ class CaptureSession:
             self._pending = None
             self.recording.add(Action(
                 ActionKind.DOUBLE_CLICK, target=target,
-                args=self._button_args(event), t=self._elapsed(event.t)))
+                args=self._button_args(event), t=self._elapsed(event.t),
+                note=self._last_note))
             return
 
         if event.kind == "mouse_press":
             self._flush_typing()
-            self._pending = _Pending(event, target, node)
+            self._pending = _Pending(event, target, node, self._last_note)
             return
 
         # mouse_release: pair it with the press if they belong together
@@ -425,7 +495,7 @@ class CaptureSession:
                     else ActionKind.CLICK)
             self.recording.add(Action(
                 kind, target=target, args=self._button_args(pending.event),
-                t=self._elapsed(pending.event.t)))
+                t=self._elapsed(pending.event.t), note=pending.note))
             return
 
         # Press and release on different widgets. Usually a drag -- but a menu
@@ -666,27 +736,46 @@ class CaptureSession:
         return args
 
     def _resolve(self, locator: Locator):
-        """Resolve a locator, remembering why in `self._last_reason` if it fails."""
+        """Resolve a locator, remembering why in `self._last_reason` if it fails.
+
+        Also remembers, in `self._last_note`, anything the resulting step should
+        say about itself -- a click attributed to a widget rather than to the
+        thing inside it needs to admit that.
+        """
         key = (locator.cls, locator.object_name, locator.text,
                locator.title, locator.index, locator.path)
         if key in self._resolved_cache:
-            result, self._last_reason = self._resolved_cache[key]
+            result, self._last_reason, self._last_note = self._resolved_cache[key]
             return result
 
-        node = find_by_locator(self.backend, locator)
-        result = None
-        reason = ""
-        if node is None:
-            reason = NOT_FINDABLE
-        else:
-            target = self.resolver.resolve(node)
-            if target.robustness is Robustness.UNRESOLVED:
-                reason = NOT_UNIQUE
-            else:
-                result = (node, target)
-        self._resolved_cache[key] = (result, reason)
-        self._last_reason = reason
+        result, reason, note = self._resolve_uncached(locator)
+        self._resolved_cache[key] = (result, reason, note)
+        self._last_reason, self._last_note = reason, note
         return result
+
+    def _resolve_uncached(self, locator: Locator):
+        if is_chrome(locator.cls, locator.object_name):
+            return None, CHROME, ""
+
+        note = ""
+        if is_internal(locator.object_name):
+            # Clicked through one of Qt's own widgets. The event belongs to the
+            # control that owns it.
+            owner = owner_of(locator)
+            if owner is None:
+                return None, NO_OWNER, ""
+            note = ("clicks the widget, not the item under the pointer: the "
+                    "click landed on Qt's own "
+                    f"{locator.object_name}")
+            locator = owner
+
+        node = find_by_locator(self.backend, locator)
+        if node is None:
+            return None, NOT_FINDABLE, ""
+        target = self.resolver.resolve(node)
+        if target.robustness is Robustness.UNRESOLVED:
+            return None, NOT_UNIQUE, ""
+        return (node, target), "", note
 
     def _drop(self, event: RawEvent, reason: str = "") -> None:
         """Count an event that could not be recorded, and say why."""

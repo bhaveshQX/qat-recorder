@@ -248,6 +248,31 @@ Tab moved focus onto a checkbox mid-typing and the recorder emitted
 the user had typed it. Characters landing on anything that is not a text field
 are recorded as individual key presses instead.
 
+**Half the widgets in a Qt application belong to Qt, not to the application**
+[live]
+
+A tree view owns a viewport, two scrollbars and a container for each; a tab
+widget owns a stacked widget; a spin box owns a line edit. Qt names them itself
+with a `qt_` prefix. Nobody clicks one on purpose — they click *through* it — but
+the event is delivered to it, so a recorder that takes the receiver at its word
+produces steps like
+
+```
+mouse_click({"objectName": "qt_scrollarea_vcontainer",
+             "parent": {"objectName": "treeView"}})
+```
+
+which failed on a real replay: Qt creates that container only while a scrollbar
+is needed and shows it only while one is shown. Clicks through a *surface* — a
+viewport, a stacked page, a spin box's line edit — are attributed to the control
+that owns it. Clicks on *chrome* — scrollbars, their containers, overflow
+buttons — are dropped, because scrolling is not a step and the widget comes and
+goes with the content.
+
+The audit had classified these as internal since Phase 1. Capture simply never
+used what the audit knew, which is its own lesson about knowledge living in one
+half of a system.
+
 **A menu item is not an object that can receive a click** [live] [source]
 
 In a widgets application a menu item is a `QAction`: no geometry, no events. The
