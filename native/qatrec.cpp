@@ -22,6 +22,7 @@
 #include <QtCore/QEvent>
 #include <QtCore/QMetaObject>
 #include <QtCore/QObject>
+#include <QtCore/QPoint>
 #include <QtCore/QString>
 #include <QtCore/QVariant>
 #include <QtCore/QtGlobal>
@@ -42,6 +43,7 @@
 #include <thread>
 
 #include <arpa/inet.h>
+#include <dlfcn.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -166,7 +168,66 @@ int siblingIndex(const QObject *object)
     return -1;
 }
 
-void appendLocator(std::string &out, QObject *object)
+// ---------------------------------------------------------------------------
+// Which menu item was clicked
+//
+// A menu item is a QAction, not a widget. QMenu and QMenuBar draw their items
+// themselves, so the event filter only ever sees the menu -- and the menu is
+// the wrong thing to click on replay, because Qat aims at the centre of a
+// widget and the centre of a full-width menu bar is empty space. The item has
+// to be asked for by position, and the only API that answers is
+// QMenu::actionAt(), which lives in QtWidgets.
+//
+// Linking QtWidgets is not an option: this library is preloaded into QML
+// applications too, and a hard dependency on a library they never load would
+// stop them starting at all. So the symbols are looked up in whatever the
+// process already has mapped. On a widgets application they resolve; on a QML
+// application they are absent and this whole feature switches itself off --
+// which is right, because in QML a menu item IS an object and arrives through
+// the ordinary path.
+//
+// Calling a non-virtual member function through a plain function pointer is
+// well-defined on the Itanium C++ ABI, which is the ABI of every platform this
+// library targets. `this` comes first; QObject is the first base of both
+// QWidget and QAction, so the pointers need no adjustment.
+// ---------------------------------------------------------------------------
+
+using ActionAtFn = QObject *(*)(const QObject *, const QPoint &);
+
+ActionAtFn lookupActionAt(const char *symbol)
+{
+    return reinterpret_cast<ActionAtFn>(::dlsym(RTLD_DEFAULT, symbol));
+}
+
+void appendMenuItem(std::string &out, QObject *object, const QPoint &position)
+{
+    static ActionAtFn menuActionAt =
+        lookupActionAt("_ZNK5QMenu8actionAtERK6QPoint");
+    static ActionAtFn menuBarActionAt =
+        lookupActionAt("_ZNK8QMenuBar8actionAtERK6QPoint");
+
+    ActionAtFn actionAt = nullptr;
+    if (object->inherits("QMenu"))
+        actionAt = menuActionAt;
+    else if (object->inherits("QMenuBar"))
+        actionAt = menuBarActionAt;
+    if (!actionAt)
+        return;
+
+    QObject *action = actionAt(object, position);
+    if (!action)
+        return;         // on the menu, but between items or on a separator
+
+    const std::string text = propertyIfAny(action, "text");
+    if (!text.empty())
+        appendString(out, "menuItem", text);
+    const std::string name = toStd(action->objectName());
+    if (!name.empty())
+        appendString(out, "menuItemName", name);
+}
+
+void appendLocator(std::string &out, QObject *object,
+                   const QPoint *position = nullptr)
 {
     out += "\"target\":{";
     appendString(out, "class", object->metaObject()->className());
@@ -178,6 +239,9 @@ void appendLocator(std::string &out, QObject *object)
     const std::string title = propertyIfAny(object, "title");
     if (!title.empty())
         appendString(out, "title", title);
+
+    if (position)
+        appendMenuItem(out, object, *position);
 
     appendInt(out, "index", siblingIndex(object));
 
@@ -305,6 +369,13 @@ protected:
         appendString(line, "kind", kind);
         appendInt(line, "t", now);
 
+        // Where the pointer was, in the receiving widget's coordinates. Used to
+        // ask a menu which of its items was hit; never recorded as a coordinate
+        // to replay, because clicking by position is exactly what makes a
+        // recorded script break the first time a layout changes.
+        QPoint mousePosition;
+        const QPoint *hitPoint = nullptr;
+
         switch (type) {
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonRelease:
@@ -313,12 +384,13 @@ protected:
             appendInt(line, "button", static_cast<long long>(mouse->button()));
             appendInt(line, "modifiers", static_cast<long long>(mouse->modifiers()));
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-            appendInt(line, "x", static_cast<long long>(mouse->position().x()));
-            appendInt(line, "y", static_cast<long long>(mouse->position().y()));
+            mousePosition = mouse->position().toPoint();
 #else
-            appendInt(line, "x", static_cast<long long>(mouse->pos().x()));
-            appendInt(line, "y", static_cast<long long>(mouse->pos().y()));
+            mousePosition = mouse->pos();
 #endif
+            appendInt(line, "x", static_cast<long long>(mousePosition.x()));
+            appendInt(line, "y", static_cast<long long>(mousePosition.y()));
+            hitPoint = &mousePosition;
             break;
         }
         case QEvent::KeyPress:
@@ -342,7 +414,7 @@ protected:
             break;
         }
 
-        appendLocator(line, object);
+        appendLocator(line, object, hitPoint);
         line += '}';
         line += '\n';
 

@@ -34,6 +34,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
+from qat_recorder.menus import NOT_FOUND, resolve_menu_item
 from qat_recorder.naming import NameResolver, is_editable, is_secret_field
 
 # Qt::Key values for keys that do not produce text.
@@ -82,37 +83,10 @@ def is_menu_interaction(press_class: str, release_class: str) -> bool:
                for hint in MENU_HINTS)
 
 
-# ---------------------------------------------------------------------------
-# Position-sensitive widgets
-#
-# Clicking the centre of a widget is right for a button and wrong for a menu
-# bar: menu titles are painted by the bar itself rather than being child
-# widgets, so the only way to hit "Tools" is the coordinate where it was hit
-# during recording. A menu bar spans the window, and its centre is usually
-# empty space -- clicking there opens nothing, and the next step then fails
-# looking for a menu item that was never shown.
-#
-# The same applies to tab bars, table headers, sliders and item views: the
-# widget is one object, but which part of it you press decides what happens.
-# ---------------------------------------------------------------------------
+def is_menu_bar(class_name: str) -> bool:
+    """Whether clicking an item of this opens a menu rather than doing something."""
+    return (class_name or "").strip().endswith("MenuBar")
 
-POSITION_SENSITIVE_CLASSES = frozenset({
-    "QMenuBar", "QMenu", "QTabBar", "QHeaderView", "QSlider", "QScrollBar",
-    "QDial", "QCalendarWidget", "QAbstractItemView", "QAbstractSlider",
-})
-
-POSITION_SENSITIVE_SUFFIXES = (
-    "MenuBar", "TabBar", "HeaderView", "ItemView",
-    "ListView", "TreeView", "TableView",
-    "ListWidget", "TreeWidget", "TableWidget",
-)
-
-
-def is_position_sensitive(class_name: str) -> bool:
-    """Whether *where* you clicked decides what the click does."""
-    name = (class_name or "").strip()
-    return name in POSITION_SENSITIVE_CLASSES or \
-        name.endswith(POSITION_SENSITIVE_SUFFIXES)
 
 # `is_editable` lives in naming.py, because the resolver needs the same
 # knowledge for a different reason: this module uses it to decide whether typed
@@ -226,6 +200,10 @@ class CaptureSession:
         self._t0: Optional[int] = None
         self._group: list = []
         self._pending: Optional[_Pending] = None
+        #: When a menu item was last clicked, and which one, so the release that
+        #: Qt redirects to the popup can be told apart from a real second click.
+        self._menu_press_t: Optional[int] = None
+        self._menu_definition: Optional[dict] = None
         self._typing_node: Any = None
         self._typing_target: Optional[Target] = None
         self._typing_t: int = 0
@@ -368,6 +346,11 @@ class CaptureSession:
         # key_release and focus_in carry no action of their own.
 
     def _handle_mouse(self, event: RawEvent) -> None:
+        # Menus first: the object a menu click is delivered to is never the
+        # thing the person clicked.
+        if self._handle_menu(event):
+            return
+
         resolved = self._resolve(event.target)
         if resolved is None:
             self.unresolved += 1
@@ -428,6 +411,88 @@ class CaptureSession:
                       "dy": event.y - pending.event.y,
                       **self._button_args(pending.event)},
                 t=self._elapsed(pending.event.t)))
+
+    # -- menus -------------------------------------------------------------
+
+    def _handle_menu(self, event: RawEvent) -> bool:
+        """Fold a click on a menu into a click on the item that was chosen.
+
+        Returns True when the event has been dealt with here.
+
+        Using a menu produces more raw events than it appears to. Pressing on
+        the bar opens the menu, and Qt immediately redirects the release to the
+        popup that has just appeared -- a release on a different widget, at a
+        position that is not even inside it, which is neither a drag nor a
+        second click. Only the press names an item, so the press is what gets
+        recorded and the release belonging to it is dropped.
+
+        Unless the release names a *different* item: that is the press-drag-
+        release way of using a menu, and then the release is a choice in its own
+        right.
+        """
+        if event.kind == "mouse_release":
+            pressed_at = self._menu_press_t
+            self._menu_press_t = None
+            if pressed_at is None or event.t - pressed_at > self.click_ms:
+                return False
+            target = self._menu_item_target(event)
+            if target is not None and target.definition != self._menu_definition:
+                self._add_menu_click(event, target)
+            return True
+
+        # A press or a double click. Any of them ends a menu interaction.
+        self._menu_press_t = None
+        if not event.target.menu_item:
+            return False
+
+        target = self._menu_item_target(event)
+        if target is None:
+            # Deliberately dropped rather than recorded against the menu. A
+            # click on the menu itself lands in the centre of a bar the width of
+            # the window and opens nothing; it has been watched failing on a
+            # real application twice. A recording that is short by one step and
+            # says so beats one that looks complete and does not replay.
+            self.unresolved += 1
+            self.failures.append(
+                f"menu item {event.target.menu_item!r} in "
+                f"{event.target.cls or '?'}: {NOT_FOUND}")
+            return True
+
+        # Qt sends press, release, double-click, release for a double click. The
+        # double-click event is the second half of a choice already recorded --
+        # emitting it again would click the same menu title twice, which closes
+        # the menu the first click opened.
+        if (event.kind == "mouse_double"
+                and target.definition == self._menu_definition):
+            self._menu_press_t = event.t
+            return True
+
+        self._flush_typing()
+        self._pending = None
+        self._menu_press_t = event.t
+        self._menu_definition = target.definition
+        self._add_menu_click(event, target)
+        return True
+
+    def _menu_item_target(self, event: RawEvent) -> Optional[Target]:
+        """The chosen item of the menu this event was delivered to."""
+        if not event.target.menu_item:
+            return None
+        resolved = self._resolve(event.target)          # the menu itself
+        if resolved is None:
+            return None
+        _, menu = resolved
+        return resolve_menu_item(self.backend, menu.definition,
+                                 event.target.menu_item,
+                                 event.target.menu_item_name)
+
+    def _add_menu_click(self, event: RawEvent, target: Target) -> None:
+        kind = (ActionKind.CONTEXT_CLICK if event.button == 2
+                else ActionKind.CLICK)
+        note = "opens the menu" if is_menu_bar(event.target.cls) else ""
+        self.recording.add(Action(
+            kind, target=target, args=self._button_args(event),
+            t=self._elapsed(event.t), note=note))
 
     def _handle_key(self, event: RawEvent) -> None:
         if event.key in MODIFIER_KEYS:
@@ -552,13 +617,10 @@ class CaptureSession:
         modifiers = modifier_names(event.modifiers)
         if modifiers:
             args["modifiers"] = "+".join(modifiers)
-
-        # Keep the coordinates only where they decide the outcome. Recording
-        # them everywhere would make every step depend on layout; recording them
-        # nowhere means a menu bar gets clicked in its empty middle.
-        if is_position_sensitive(event.target.cls):
-            args["x"] = event.x
-            args["y"] = event.y
+        # No coordinates, ever. A step that clicks a position rather than a
+        # named thing replays correctly exactly once -- on the machine, screen
+        # and window size it was recorded on -- and then quietly clicks
+        # whatever moved into that spot.
         return args
 
     def _resolve(self, locator: Locator):

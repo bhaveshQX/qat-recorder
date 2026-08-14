@@ -17,7 +17,12 @@ add_library(qatrec SHARED qatrec.cpp)
 target_link_libraries(qatrec PRIVATE
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Gui
+    ${CMAKE_DL_LIBS}     # dlsym, for menu items -- see appendMenuItem()
 )
+
+# RTLD_DEFAULT is a GNU extension. g++ defines _GNU_SOURCE for C++ already, but
+# saying so here means the build does not depend on that staying true.
+target_compile_definitions(qatrec PRIVATE _GNU_SOURCE)
 
 target_compile_options(qatrec PRIVATE -Wall -Wextra -fvisibility=hidden)
 

@@ -15,11 +15,12 @@ KEY_TAB = 0x01000001
 
 
 def event(kind, t, cls, object_name="", text="", title="", index=-1,
-          path=(), **extra):
+          path=(), menu_item="", menu_item_name="", **extra):
     return RawEvent(
         kind=kind, t=t,
         target=Locator(cls=cls, object_name=object_name, text=text,
-                       title=title, index=index, path=tuple(path)),
+                       title=title, index=index, path=tuple(path),
+                       menu_item=menu_item, menu_item_name=menu_item_name),
         **extra)
 
 
@@ -106,28 +107,43 @@ def test_opening_a_menu_becomes_two_clicks_not_a_drag(session):
     assert recording.actions[2].target.definition == {"objectName": "menuOptions"}
 
 
-def test_a_menu_bar_click_keeps_its_coordinates(session):
-    """Menu titles are painted by the bar, not child widgets.
+def test_a_menu_bar_click_names_the_item_it_opened(session):
+    """The bar received the event; the item is what was clicked.
 
-    Qat clicks the centre of a widget, and a menu bar spans the window — its
-    centre is empty space, so the menu never opens and the following step fails
-    looking for an item that was never shown.
+    Qat aims at the centre of a widget. A menu bar is as wide as the window and
+    its centre is empty space, so clicking the bar opens nothing — and the step
+    after it then fails looking for an item that was never shown. Qat addresses
+    the item itself, by the menu that holds it and the item's label.
     """
     capture, _, _ = session
     capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
-                       button=1, x=42, y=11))
+                       button=1, x=42, y=11, menu_item="&Options"))
     capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
-                       button=1, x=42, y=11))
+                       button=1, x=42, y=11, menu_item="&Options"))
     recording = capture.finish()
 
     click = recording.actions[-1]
     assert click.kind is ActionKind.CLICK
-    assert click.args["x"] == 42
-    assert click.args["y"] == 11
+    assert click.target.definition == {
+        "container": {"objectName": "menubar"}, "text": "Options"}
+    assert click.note == "opens the menu"
+
+
+def test_a_menu_click_carries_no_coordinates(session):
+    """The position is how the item was identified, not how it is replayed."""
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    recording = capture.finish()
+
+    assert "x" not in recording.actions[-1].args
+    assert "y" not in recording.actions[-1].args
 
 
 def test_an_ordinary_button_click_has_no_coordinates(session):
-    """Recording positions everywhere would make every step depend on layout."""
+    """Recording positions anywhere would make steps depend on layout."""
     capture, _, _ = session
     capture.feed_all(click_pair(1000, "QPushButton", "loginButton", x=17, y=9))
     recording = capture.finish()
@@ -137,21 +153,90 @@ def test_an_ordinary_button_click_has_no_coordinates(session):
     assert "y" not in click.args
 
 
-@pytest.mark.parametrize("class_name", [
-    "QMenuBar", "QTabBar", "QHeaderView", "QSlider", "QScrollBar",
-    "QTreeWidget", "QTableView", "TransferListWidget", "MyCustomListView",
-])
-def test_position_sensitive_widgets_are_recognised(class_name):
-    from qat_recorder.capture import is_position_sensitive
-    assert is_position_sensitive(class_name) is True
+def test_the_release_redirected_to_the_popup_is_not_a_second_click(session):
+    """Opening a menu is one click, however many events Qt sends.
+
+    Qt grabs the mouse for the popup the moment it appears, so the release of
+    the click that opened it is delivered to the popup instead — at a position
+    that is not even inside it. Recorded literally that is a second click on
+    coordinates like (6, -11), which is what produced "Given coordinates are
+    outside widget's boundaries" on a real application.
+    """
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=133, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1040, "QMenu", "menuOptions",
+                       button=1, x=6, y=-11))
+    recording = capture.finish()
+
+    kinds = [action.kind for action in recording.actions]
+    assert kinds.count(ActionKind.CLICK) == 1
+    assert ActionKind.DRAG not in kinds
 
 
-@pytest.mark.parametrize("class_name", [
-    "QPushButton", "QCheckBox", "QLineEdit", "QLabel", "QGroupBox",
-])
-def test_ordinary_widgets_are_not_position_sensitive(class_name):
-    from qat_recorder.capture import is_position_sensitive
-    assert is_position_sensitive(class_name) is False
+def test_choosing_an_item_names_the_item_not_the_menu(session):
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 2000, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Preferences"))
+    capture.feed(event("mouse_release", 2050, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Preferences"))
+    recording = capture.finish()
+
+    click = recording.actions[-1]
+    assert click.kind is ActionKind.CLICK
+    assert click.target.definition == {
+        "container": {"objectName": "menuOptions"}, "text": "Preferences"}
+    assert click.note == ""          # this one does something, it does not open
+
+
+def test_pressing_on_the_bar_and_releasing_on_an_item_selects_it(session):
+    """The other way to use a menu: press, drag down, release on the item."""
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1300, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Preferences"))
+    recording = capture.finish()
+
+    clicks = [a for a in recording.actions if a.kind is ActionKind.CLICK]
+    assert len(clicks) == 2
+    assert clicks[0].target.definition["text"] == "Options"
+    assert clicks[1].target.definition["text"] == "Preferences"
+
+
+def test_double_clicking_a_menu_item_is_still_one_choice(session):
+    """Qt sends press, release, double-click, release.
+
+    Recorded literally that clicks the menu title twice, and the second click
+    closes the menu the first one opened.
+    """
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_double", 1080, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1120, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    recording = capture.finish()
+
+    clicks = [a for a in recording.actions if a.kind is ActionKind.CLICK]
+    assert len(clicks) == 1
+
+
+def test_an_unfindable_menu_item_is_dropped_rather_than_guessed(session):
+    """A click on the menu instead is known to fail; a missing step says so."""
+    capture, _, _ = session
+    capture.feed(event("mouse_press", 1000, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Nothing here"))
+    capture.feed(event("mouse_release", 1040, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Nothing here"))
+    recording = capture.finish()
+
+    assert [a.kind for a in recording.actions] == [ActionKind.LAUNCH]
+    assert capture.unresolved == 1
+    assert "Nothing here" in capture.failures[0]
 
 
 def test_a_menu_action_release_is_also_two_clicks(session):

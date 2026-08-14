@@ -38,6 +38,16 @@ def build_tree():
     menu_options = menubar.add(FakeNode(["QMenu"] + WIDGET, {
         "objectName": "menuOptions", "title": "Options"}))
 
+    # Qat wraps every menu item in a virtual widget carrying the item's label,
+    # because the item itself is a QAction and a QAction cannot be clicked.
+    # Those wrappers are what `{"container": menu, "text": label}` finds, so the
+    # fake tree carries them too -- otherwise the resolver could be tested only
+    # against a shape the real application does not have.
+    options_title = menubar.add(FakeNode(["QWidget"] + WIDGET, {
+        "text": "Options"}))
+    preferences_item = menu_options.add(FakeNode(["QWidget"] + WIDGET, {
+        "text": "Preferences"}))
+
     creds = root.add(FakeNode(GROUP, {
         "objectName": "credentialsGroup", "title": "Credentials"}))
 
@@ -81,5 +91,6 @@ def build_tree():
         "apply_a": apply_a, "apply_b": apply_b,
         "login": login, "status": status, "save_action": save_action,
         "menubar": menubar, "menu_options": menu_options,
+        "options_title": options_title, "preferences_item": preferences_item,
     }
     return FakeBackend([window]), nodes

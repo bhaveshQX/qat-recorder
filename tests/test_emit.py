@@ -102,17 +102,24 @@ def test_definitions_become_named_constants(recording):
     assert "LOGINBUTTON = {'objectName': 'loginButton'}" in source
 
 
-def test_position_sensitive_clicks_carry_coordinates():
-    """A menu bar must be clicked where the title is, not in its centre."""
-    backend, nodes = build_tree()
+def test_a_menu_step_clicks_the_item_by_name():
+    """No coordinates anywhere in the generated script — for anything."""
+    backend, _ = build_tree()
     capture = CaptureSession(backend, app_name="sample")
     capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
-                       button=1, x=42, y=11))
-    capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
-                       button=1, x=42, y=11))
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1040, "QMenu", "menuOptions",
+                       button=1, x=6, y=-11))
+    capture.feed(event("mouse_press", 2000, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Preferences"))
+    capture.feed(event("mouse_release", 2050, "QMenu", "menuOptions",
+                       button=1, x=40, y=30, menu_item="&Preferences"))
 
     source = emit_python(capture.finish())
-    assert "qat.mouse_click(MENUBAR, 42, 11)" in source
+    assert "OPTIONS = {'container': {'objectName': 'menubar'}, 'text': 'Options'}" \
+        in source
+    assert "qat.mouse_click(OPTIONS)  # opens the menu" in source
+    assert "qat.mouse_click(PREFERENCES)" in source
     compile(source, "generated.py", "exec")
 
 

@@ -226,6 +226,32 @@ Tab moved focus onto a checkbox mid-typing and the recorder emitted
 the user had typed it. Characters landing on anything that is not a text field
 are recorded as individual key presses instead.
 
+**A menu item is not an object that can receive a click** [live] [source]
+
+In a widgets application a menu item is a `QAction`: no geometry, no events. The
+menu paints it. So the filter sees a click on `QMenuBar` or on the popup `QMenu`,
+and neither is clickable in a useful way — Qat aims at the centre of a widget,
+and the centre of a menu bar as wide as the window is empty space. Recorded
+naively, the menu never opens on replay and the following step fails with
+`Unable to find object: {"objectName":"menuOptions"}`.
+
+Qat solves this itself: it wraps each item in a virtual widget carrying the
+item's geometry, addressed by the containing menu plus the item's label —
+`{"container": {"type": "QMenuBar"}, "text": "File"}`. The filter therefore asks
+the menu which item is under the pointer (`QMenu::actionAt`, reached through
+`dlsym` so QtWidgets is never linked) and the recorder emits Qat's own form. The
+click position is used to identify the item and is then discarded.
+
+**Qt redirects the release of the click that opened a menu** [live]
+
+The popup grabs the mouse as soon as it appears, so the press lands on the
+`QMenuBar` and the release on the `QMenu` — at a position outside it. Taken at
+face value that is a second click at, in one measured case, (6, −11), which Qat
+rejects: `Cannot execute mouse operation: Given coordinates are outside widget's
+boundaries`. Opening a menu is one click however many events Qt sends, so the
+press names the item and its release is dropped — unless the release names a
+*different* item, which is the press-drag-release way of using a menu.
+
 ---
 
 ## 5. What remains unverified

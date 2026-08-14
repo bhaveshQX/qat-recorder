@@ -105,6 +105,24 @@ def test_the_cpp_source_ships_with_the_package():
     assert (source / "CMakeLists.txt").exists()
 
 
+@pytest.mark.parametrize("name", ["qatrec.cpp", "CMakeLists.txt", "test_app.cpp"])
+def test_the_shipped_native_source_matches_the_repository(name):
+    """The wheel carries its own copy of the C++ source, because the VM builds
+    the filter from what pip installed rather than from a checkout.
+
+    Two copies of a file drift, and this pair drifted the first time the filter
+    changed: `native/` gained menu-item support and the copy the VM actually
+    compiles did not, so the fix would have shipped as a no-op. Compared byte
+    for byte, newlines normalised — Windows checkouts convert them.
+    """
+    from qat_recorder.native import source_dir
+
+    repo = (ROOT / "native" / name).read_text(encoding="utf-8")
+    shipped = (source_dir() / name).read_text(encoding="utf-8")
+    assert repo.replace("\r\n", "\n") == shipped.replace("\r\n", "\n"), (
+        f"native/{name} and the packaged copy differ; copy it across")
+
+
 def test_core_imports_without_qat_or_qt():
     """The tester's machine installs this without qat; the VM installs it with.
 

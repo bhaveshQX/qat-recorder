@@ -15,6 +15,10 @@ The wire format is the contract between the C++ and Python halves:
                 "path": [{"class": "QWidget", "objectName": "rootWidget"},
                          {"class": "QMainWindow", "objectName": "mainWindow"}]}}
 
+A click on a menu or menu bar carries one extra field, `menuItem`, naming the
+item under the pointer. The coordinates are how the filter works that out; they
+are not how the click is replayed.
+
 Note what is absent: the characters typed. Those never cross the socket, so a
 crash dump, a log or a packet capture cannot leak a password.
 """
@@ -45,6 +49,13 @@ class Locator:
     text: str = ""
     title: str = ""
     index: int = -1
+    #: For a click on a menu or a menu bar: the label of the item under the
+    #: pointer. Menu items are QActions rather than widgets, so they never
+    #: receive the event themselves and the menu has to be asked which one was
+    #: hit. Empty for everything else, and for QML, where a menu item is a real
+    #: object and arrives through the ordinary fields above.
+    menu_item: str = ""
+    menu_item_name: str = ""
     path: tuple = field(default_factory=tuple)
 
     @classmethod
@@ -55,6 +66,8 @@ class Locator:
             text=str(data.get("text", "")),
             title=str(data.get("title", "")),
             index=int(data.get("index", -1)),
+            menu_item=str(data.get("menuItem", "")),
+            menu_item_name=str(data.get("menuItemName", "")),
             path=tuple(
                 (str(item.get("class", "")), str(item.get("objectName", "")))
                 for item in data.get("path", [])
