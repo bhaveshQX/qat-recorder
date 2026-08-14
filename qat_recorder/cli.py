@@ -114,6 +114,46 @@ def _cmd_record_remote(args) -> int:
     return 0
 
 
+def pump(receiver, session, seconds: float, interval: float = 0.05,
+         clock=None, sleep=None) -> int:
+    """Feed events into `session` as they arrive. Returns how many were fed.
+
+    Resolution happens here, and it has to happen *while the session is
+    running*. An object can only be named while it exists, and everything a
+    dialog contains is destroyed when the dialog closes -- so a run that
+    recorded for thirty seconds and only then resolved lost every click inside
+    every dialog, including the OK button that closed one. The replay opened
+    that dialog and never closed it, and every step afterwards ran against a
+    screen the recording had never seen.
+
+    The cost is a few Qat round trips per event, at human speed, against an
+    application that is idle between clicks.
+    """
+    import time as _time
+
+    clock = clock or _time.time
+    sleep = sleep or _time.sleep
+
+    captured = 0
+    deadline = clock() + seconds
+    while clock() < deadline:
+        events = receiver.drain()
+        if events:
+            captured += len(events)
+            session.feed_all(events)
+        else:
+            # Grouping waits for the next event to know an interaction is
+            # finished. Nothing is coming, so close it on age instead.
+            session.flush_stale()
+        sleep(interval)
+
+    # Whatever was still in flight when the clock ran out.
+    events = receiver.drain(timeout=1.0)
+    captured += len(events)
+    session.feed_all(events)
+    return captured
+
+
 def _cmd_record(args) -> int:
     """Record a session and write the IR plus generated code."""
     if getattr(args, "agent", ""):
@@ -156,19 +196,17 @@ def _cmd_record(args) -> int:
     context = qat.start_application(name)
     print(f"recording for {args.seconds}s -- interact with the application now")
 
-    try:
-        time.sleep(args.seconds)
-        events = receiver.drain(timeout=1.0)
-        print(f"captured {len(events)} raw event(s)")
+    # The name identifies the application in generated code; the path lets that
+    # code register it. Defaulting the name to the executable's basename rather
+    # than its full path keeps the generated test readable.
+    session = CaptureSession(
+        QatBackend(qat),
+        app_name=args.name or Path(args.app).name,
+        app_path=args.app)
 
-        # The name identifies the application in generated code; the path lets
-        # that code register it. Defaulting the name to the executable's
-        # basename rather than its full path keeps the generated test readable.
-        session = CaptureSession(
-            QatBackend(qat),
-            app_name=args.name or Path(args.app).name,
-            app_path=args.app)
-        session.feed_all(events)
+    try:
+        captured = pump(receiver, session, args.seconds)
+        print(f"captured {captured} raw event(s)")
         recording = session.finish()
     finally:
         receiver.stop()

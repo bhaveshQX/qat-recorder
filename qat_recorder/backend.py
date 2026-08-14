@@ -124,13 +124,18 @@ class QatBackend:
         empty list. Every caller here treats "no match" as a normal answer --
         the resolver tries candidate definitions precisely to discover which
         ones fail -- so the exception is translated into the empty result the
-        port promises.
+        port promises. Left unhandled, one click on a widget that was later
+        hidden aborted an entire recording and discarded every event captured
+        with it.
 
-        This matters more than it sounds. Qat also adds `visible: true` and
-        `enabled: true` to every definition, so an object on a tab that is not
-        currently shown simply cannot be found. Left unhandled, one click on a
-        widget that was later hidden aborted an entire recording and discarded
-        every event captured with it.
+        One asymmetry is worth knowing, because it decides when recording has to
+        happen. `find_all_objects` matches objects whether or not they are on
+        screen, but `mouse_click` and `type_in` go through `wait_for_object`,
+        which adds `visible: true` and `enabled: true` to the definition *and to
+        every nested container*. So a definition validated here can still fail on
+        replay if the thing it names is not showing at that point in the script.
+        Being invisible is survivable; being destroyed is not, which is why
+        events are resolved while the session is still running.
         """
         try:
             return list(self.qat.find_all_objects(dict(definition)))

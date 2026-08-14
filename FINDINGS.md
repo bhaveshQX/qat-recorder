@@ -120,6 +120,28 @@ repository.)
 would have been written to disk in clear text. Caught on the conformance
 suite's first run against a live application, while all 33 offline tests passed.
 
+### Lookup ignores visibility; clicking requires it [source] [live]
+
+`find_all_objects` sends the definition as given. `mouse_click`, `type_in` and
+everything else that operates on a widget go through `wait_for_object`, which
+adds `visible: true` and `enabled: true` — recursively, into every nested
+`container` as well. Two consequences:
+
+* A definition validated during recording can still fail on replay, because
+  validation asks "does this exist and is it unique" and replay asks "is it on
+  screen right now". A menu item is the clear case: it is findable at any time
+  and clickable only while its menu is open.
+* Conversely, an object that is merely hidden is still nameable. What cannot be
+  named is one that has been **destroyed** — and a dialog destroys its contents
+  when it closes.
+
+That second point is why events are resolved as the session runs rather than
+when it ends. A batch pass at the end lost every click inside every dialog: in
+one measured session, twelve clicks in a dialog's viewport plus the OK and
+Cancel buttons that dismissed it, sixteen dropped events in total. The replay
+then opened that dialog and never closed it, and every step after that ran
+against a screen the recording had never seen.
+
 ### Qat represents "no parent" as a null QtObject [live]
 
 Not `None`. Its definition is `None` and every attribute access on it fails.
