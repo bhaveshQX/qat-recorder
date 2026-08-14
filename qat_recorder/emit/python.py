@@ -47,6 +47,35 @@ def secret(name):
     return value
 '''
 
+#: Added only when the recording uses a menu. Qat finds a menu item through the
+#: menu that contains it, so a menu that is not open fails as though the menu
+#: itself had vanished -- "Unable to find object: {"objectName":"menuOptions"}"
+#: -- which sends you looking for the wrong problem entirely.
+MENU_HELPER = '''
+
+def menu_item(item):
+    """Click a menu item, saying what actually went wrong if it is not there."""
+    try:
+        qat.mouse_click(item)
+    except LookupError as error:
+        raise AssertionError(
+            "could not click the menu item {!r}: the menu holding it, {}, is "
+            "not open. The step before this one should have opened it. If that "
+            "step ran without complaint, something else had focus -- a dialog "
+            "left open by an earlier step will do it.".format(
+                item["text"], item["container"])) from error
+'''
+
+
+def is_menu_item(definition: Any) -> bool:
+    """Whether a definition is Qat's form for a menu item.
+
+    Recognised by shape rather than by the strategy that produced it, so a
+    recording round-tripped through JSON is treated the same as a fresh one.
+    """
+    return (isinstance(definition, Mapping)
+            and set(definition) == {"container", "text"})
+
 
 def _identifier(text: str, fallback: str = "obj") -> str:
     cleaned = re.sub(r"[^0-9a-zA-Z_]+", "_", text or "").strip("_")
@@ -135,6 +164,8 @@ def _call_for(action, constants: dict) -> list:
         if button == "right":
             lines.append(
                 f"    qat.mouse_click({target}, button=qat.Button.RIGHT){extra}")
+        elif is_menu_item(action.target.definition):
+            lines.append(f"    menu_item({target}){extra}")
         else:
             lines.append(f"    qat.mouse_click({target}){extra}")
     elif action.kind is ActionKind.CONTEXT_CLICK:
@@ -183,6 +214,9 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     constants = _constant_names(recording)
 
     out = [HEADER.format(source=source), ""]
+    if any(action.target is not None and is_menu_item(action.target.definition)
+           for action in recording.actions):
+        out.append(MENU_HELPER)
 
     for definition, name in constants.items():
         out.append(f"{name} = {definition}")

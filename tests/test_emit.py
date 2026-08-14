@@ -118,9 +118,31 @@ def test_a_menu_step_clicks_the_item_by_name():
     source = emit_python(capture.finish())
     assert "OPTIONS = {'container': {'objectName': 'menubar'}, 'text': 'Options'}" \
         in source
-    assert "qat.mouse_click(OPTIONS)  # opens the menu" in source
-    assert "qat.mouse_click(PREFERENCES)" in source
+    assert "menu_item(OPTIONS)  # opens the menu" in source
+    assert "menu_item(PREFERENCES)" in source
     compile(source, "generated.py", "exec")
+
+
+def test_a_closed_menu_is_reported_as_a_closed_menu():
+    """Qat finds an item through its menu, so a shut menu fails as a missing
+    object — which sends you looking for the wrong problem."""
+    backend, _ = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed(event("mouse_press", 1000, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+    capture.feed(event("mouse_release", 1040, "QMenuBar", "menubar",
+                       button=1, x=42, y=11, menu_item="&Options"))
+
+    source = emit_python(capture.finish())
+    assert "def menu_item(item):" in source
+    assert "not open" in source
+    assert "the menu holding it" in source
+    compile(source, "generated.py", "exec")
+
+
+def test_the_menu_helper_is_absent_when_no_menu_was_used(recording):
+    source = emit_python(recording)
+    assert "def menu_item(" not in source
 
 
 def test_ordinary_clicks_carry_no_coordinates(recording):

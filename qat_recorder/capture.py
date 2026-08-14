@@ -34,7 +34,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
-from qat_recorder.menus import NOT_FOUND, resolve_menu_item
+from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
 from qat_recorder.naming import NameResolver, is_editable, is_secret_field
 
 # Qt::Key values for keys that do not produce text.
@@ -86,6 +86,29 @@ def is_menu_interaction(press_class: str, release_class: str) -> bool:
 def is_menu_bar(class_name: str) -> bool:
     """Whether clicking an item of this opens a menu rather than doing something."""
     return (class_name or "").strip().endswith("MenuBar")
+
+
+def describe(locator: Locator) -> str:
+    """A short human description of what an event was delivered to.
+
+    Used in the report of what could not be recorded. "21 unresolved" with no
+    explanation is a mystery rather than a diagnosis, and it is the operator --
+    who knows what they clicked -- who can tell which missing step mattered.
+    """
+    if locator.menu_item:
+        return (f"menu item {strip_mnemonic(locator.menu_item)!r} in "
+                f"{locator.object_name or locator.cls or 'a menu'}")
+    name = locator.object_name or locator.text or locator.title or "<unnamed>"
+    where = locator.nearest_named_ancestor()
+    return (f"{locator.cls or '?'} {name!r}"
+            + (f" in {where}" if where else ""))
+
+
+#: Why an event could not be turned into a step.
+NOT_FINDABLE = ("could not be found through Qat while it was on screen -- "
+                "usually hidden, on another tab, or already destroyed")
+NOT_UNIQUE = ("no definition identifies it uniquely, not even by position; "
+              "it needs an objectName in the application")
 
 
 # `is_editable` lives in naming.py, because the resolver needs the same
@@ -208,6 +231,7 @@ class CaptureSession:
         self._typing_target: Optional[Target] = None
         self._typing_t: int = 0
         self._resolved_cache: dict = {}
+        self._last_reason: str = ""
         self.unresolved = 0
         #: Human-readable reasons individual events were dropped, so the count
         #: is explicable rather than mysterious.
@@ -319,7 +343,7 @@ class CaptureSession:
             self._flush_typing()
             resolved = self._resolve(event.target)
             if resolved is None:
-                self.unresolved += 1
+                self._drop(event)
                 return
             node, target = resolved
             # Qt delivers QEvent::Shortcut to whatever owns the shortcut, which
@@ -337,12 +361,14 @@ class CaptureSession:
         elif event.kind == "wheel":
             self._flush_typing()
             resolved = self._resolve(event.target)
-            if resolved is not None:
-                _, target = resolved
-                self.recording.add(Action(
-                    ActionKind.WHEEL, target=target,
-                    args={"dx": event.dx, "dy": event.dy},
-                    t=self._elapsed(event.t)))
+            if resolved is None:
+                self._drop(event)
+                return
+            _, target = resolved
+            self.recording.add(Action(
+                ActionKind.WHEEL, target=target,
+                args={"dx": event.dx, "dy": event.dy},
+                t=self._elapsed(event.t)))
         # key_release and focus_in carry no action of their own.
 
     def _handle_mouse(self, event: RawEvent) -> None:
@@ -353,7 +379,7 @@ class CaptureSession:
 
         resolved = self._resolve(event.target)
         if resolved is None:
-            self.unresolved += 1
+            self._drop(event)
             return
         node, target = resolved
 
@@ -452,10 +478,7 @@ class CaptureSession:
             # the window and opens nothing; it has been watched failing on a
             # real application twice. A recording that is short by one step and
             # says so beats one that looks complete and does not replay.
-            self.unresolved += 1
-            self.failures.append(
-                f"menu item {event.target.menu_item!r} in "
-                f"{event.target.cls or '?'}: {NOT_FOUND}")
+            self._drop(event, NOT_FOUND)
             return True
 
         # Qt sends press, release, double-click, release for a double click. The
@@ -500,7 +523,7 @@ class CaptureSession:
 
         resolved = self._resolve(event.target)
         if resolved is None:
-            self.unresolved += 1
+            self._drop(event)
             return
         node, target = resolved
 
@@ -624,19 +647,34 @@ class CaptureSession:
         return args
 
     def _resolve(self, locator: Locator):
+        """Resolve a locator, remembering why in `self._last_reason` if it fails."""
         key = (locator.cls, locator.object_name, locator.text,
                locator.title, locator.index, locator.path)
         if key in self._resolved_cache:
-            return self._resolved_cache[key]
+            result, self._last_reason = self._resolved_cache[key]
+            return result
 
         node = find_by_locator(self.backend, locator)
         result = None
-        if node is not None:
+        reason = ""
+        if node is None:
+            reason = NOT_FINDABLE
+        else:
             target = self.resolver.resolve(node)
-            if target.robustness is not Robustness.UNRESOLVED:
+            if target.robustness is Robustness.UNRESOLVED:
+                reason = NOT_UNIQUE
+            else:
                 result = (node, target)
-        self._resolved_cache[key] = result
+        self._resolved_cache[key] = (result, reason)
+        self._last_reason = reason
         return result
+
+    def _drop(self, event: RawEvent, reason: str = "") -> None:
+        """Count an event that could not be recorded, and say why."""
+        self.unresolved += 1
+        self.failures.append(
+            f"{event.kind} on {describe(event.target)}: "
+            f"{reason or self._last_reason or 'unresolved'}")
 
     def _target_for_node(self, node) -> Target:
         return self.resolver.resolve(node)

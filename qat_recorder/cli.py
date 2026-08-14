@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
+from pathlib import Path
 
 
 def _cmd_audit(args) -> int:
@@ -73,7 +75,6 @@ def _cmd_audit(args) -> int:
 def _cmd_record_remote(args) -> int:
     """Record on a VM through its agent. Nothing but the artifacts comes back."""
     import time
-    from pathlib import Path
 
     from qat_recorder.agent.registry import Registry, client_for
     from qat_recorder.agent.remote import RemoteRecorderController
@@ -126,7 +127,6 @@ def _cmd_record(args) -> int:
 
     import os
     import time
-    from pathlib import Path
 
     from qat_recorder.backend import QatBackend
     from qat_recorder.capture import CaptureSession
@@ -187,13 +187,7 @@ def _cmd_record(args) -> int:
     print(f"{len(recording.actions)} action(s), {session.unresolved} unresolved")
     print(f"written to {out}")
 
-    # An unresolved count with no explanation is just a mystery. Usually the
-    # object was on a tab that is no longer shown -- Qat adds `visible: true` to
-    # every definition, so anything hidden at resolution time cannot be found.
-    for reason in session.failures[:5]:
-        print(f"  dropped: {reason}", file=sys.stderr)
-    if len(session.failures) > 5:
-        print(f"  ... and {len(session.failures) - 5} more", file=sys.stderr)
+    _report_dropped(session, out)
 
     for action in recording.weakest_targets():
         print(f"  {action.target.robustness.value:<10} {action.target.label}",
@@ -201,9 +195,41 @@ def _cmd_record(args) -> int:
     return 0
 
 
+def _report_dropped(session, out: Path) -> None:
+    """Say what did not make it into the recording, and why.
+
+    A bare "19 unresolved" is a mystery, and the person who can say which of
+    those nineteen mattered is the one who just did the clicking. Identical
+    reasons are collapsed -- dropping the same control twenty times is one
+    problem, not twenty -- and the full list is written out to be read
+    afterwards.
+    """
+    if not session.failures:
+        return
+
+    counted = Counter(session.failures)
+    print(f"\n{len(session.failures)} event(s) could not be recorded:",
+          file=sys.stderr)
+    for reason, count in counted.most_common(8):
+        print(f"  {reason}" + (f"   (x{count})" if count > 1 else ""),
+              file=sys.stderr)
+    if len(counted) > 8:
+        print(f"  ... and {len(counted) - 8} more kinds", file=sys.stderr)
+
+    report = out / "unresolved.txt"
+    report.write_text(
+        "Events that could not be turned into steps.\n\n"
+        "Each of these is something you did that the generated test will not "
+        "do. If one of them mattered -- closing a dialog, for instance -- the "
+        "replay diverges from your session at that point.\n\n"
+        + "\n".join(f"{count:>4} x  {reason}"
+                    for reason, count in counted.most_common()) + "\n",
+        encoding="utf-8")
+    print(f"  full list: {report}", file=sys.stderr)
+
+
 def _cmd_emit(args) -> int:
     """Re-generate code from an existing recording, without re-recording."""
-    from pathlib import Path
 
     from qat_recorder.emit import emit_gherkin, emit_python, emit_steps
     from qat_recorder.ir import Recording
