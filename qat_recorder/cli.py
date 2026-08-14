@@ -111,6 +111,11 @@ def _cmd_record_remote(args) -> int:
     print(f"written to {args.out}")
     for path in written:
         print(f"  {path}")
+    if summary.get("unresolved"):
+        # The reasons live on the VM's side of the connection; they come back
+        # with the artifacts rather than over the event stream.
+        print("\n  what was dropped, and why: "
+              f"{Path(args.out) / 'unresolved.txt'}", file=sys.stderr)
     return 0
 
 
@@ -254,15 +259,10 @@ def _report_dropped(session, out: Path) -> None:
     if len(counted) > 8:
         print(f"  ... and {len(counted) - 8} more kinds", file=sys.stderr)
 
+    from qat_recorder.capture import dropped_report
+
     report = out / "unresolved.txt"
-    report.write_text(
-        "Events that could not be turned into steps.\n\n"
-        "Each of these is something you did that the generated test will not "
-        "do. If one of them mattered -- closing a dialog, for instance -- the "
-        "replay diverges from your session at that point.\n\n"
-        + "\n".join(f"{count:>4} x  {reason}"
-                    for reason, count in counted.most_common()) + "\n",
-        encoding="utf-8")
+    report.write_text(dropped_report(session.failures), encoding="utf-8")
     print(f"  full list: {report}", file=sys.stderr)
 
 

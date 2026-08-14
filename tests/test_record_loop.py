@@ -57,6 +57,22 @@ def test_the_same_click_is_lost_if_it_is_resolved_afterwards():
     assert "could not be found" in capture.failures[0]
 
 
+def test_the_drop_report_collapses_repeats_and_explains_itself():
+    from qat_recorder.capture import dropped_report
+
+    text = dropped_report(["click on A: gone", "click on A: gone",
+                           "click on B: gone"])
+    assert "2 x  click on A: gone" in text
+    assert "1 x  click on B: gone" in text
+    assert "the replay diverges" in text
+
+
+def test_the_drop_report_says_so_when_nothing_was_dropped():
+    from qat_recorder.capture import dropped_report
+
+    assert "Every event was recorded" in dropped_report([])
+
+
 class FakeReceiver:
     """Hands out one batch of events per drain, then nothing."""
 

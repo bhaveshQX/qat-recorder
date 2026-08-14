@@ -29,6 +29,7 @@ are twice as long and no more faithful.
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional
 
@@ -109,6 +110,24 @@ NOT_FINDABLE = ("could not be found through Qat while it was on screen -- "
                 "usually hidden, on another tab, or already destroyed")
 NOT_UNIQUE = ("no definition identifies it uniquely, not even by position; "
               "it needs an objectName in the application")
+
+
+def dropped_report(failures: Iterable[str]) -> str:
+    """The contents of unresolved.txt.
+
+    Written wherever a recording is saved -- locally, from the panel, or fetched
+    back from an agent -- because the count on its own is a mystery, and a
+    dropped step is something the operator did that the test will not do.
+    """
+    counted = Counter(failures)
+    if not counted:
+        return "Every event was recorded.\n"
+    return ("Events that could not be turned into steps.\n\n"
+            "Each of these is something you did that the generated test will "
+            "not do. If one of them mattered -- closing a dialog, for instance "
+            "-- the replay diverges from your session at that point.\n\n"
+            + "\n".join(f"{count:>4} x  {reason}"
+                        for reason, count in counted.most_common()) + "\n")
 
 
 # `is_editable` lives in naming.py, because the resolver needs the same

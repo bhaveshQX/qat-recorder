@@ -360,12 +360,18 @@ class RecorderController:
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         written = []
-        for name, text in (
+        files = [
             ("recording.json", recording.dumps()),
             ("test_recorded.py", emit_python(recording)),
             ("recorded.feature", emit_gherkin(recording)),
             ("steps.py", emit_steps(recording)),
-        ):
+        ]
+        if self.session is not None and self.session.failures:
+            from qat_recorder.capture import dropped_report  # noqa: PLC0415
+            files.append(("unresolved.txt",
+                          dropped_report(self.session.failures)))
+
+        for name, text in files:
             path = out / name
             path.write_text(text, encoding="utf-8")
             written.append(str(path))

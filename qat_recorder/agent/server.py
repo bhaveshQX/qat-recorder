@@ -254,14 +254,23 @@ class Agent:
             if problems:
                 raise AgentError("recording is not valid: " + "; ".join(problems),
                                  409)
+            files = {
+                "test_recorded.py": emit_python(recording),
+                "recorded.feature": emit_gherkin(recording),
+                "steps.py": emit_steps(recording),
+            }
+            # Comes back with the artifacts, so a tester driving a VM from
+            # their own machine can see what the recording lost without
+            # logging in to read it there.
+            capture = getattr(session.controller, "session", None)
+            if capture is not None and capture.failures:
+                from qat_recorder.capture import dropped_report
+                files["unresolved.txt"] = dropped_report(capture.failures)
+
             return {
                 "session_id": session.id,
                 "recording": recording.to_dict(),
-                "files": {
-                    "test_recorded.py": emit_python(recording),
-                    "recorded.feature": emit_gherkin(recording),
-                    "steps.py": emit_steps(recording),
-                },
+                "files": files,
             }
 
     def release(self, session_id: str) -> dict:
