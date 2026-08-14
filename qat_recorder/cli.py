@@ -238,6 +238,40 @@ def _cmd_record(args) -> int:
     return 0
 
 
+def _cmd_replay(args) -> int:
+    """Run a recorded test where the application is.
+
+    With --agent, on that host: the recording was made there, the application
+    lives there, and a recorded test launches the application itself. Without
+    one, in the directory given.
+    """
+    if args.agent:
+        from qat_recorder.agent.registry import Registry, client_for
+
+        try:
+            host = Registry.load().resolve(args.agent)
+            client = client_for(host)
+            session = client.current()
+            if not session:
+                print(f"{args.agent} has no session to replay; record one first",
+                      file=sys.stderr)
+                return 1
+            print(f"replaying on {host.name} ({session.get('directory', '?')})")
+            result = client.replay(session["session_id"], args.timeout)
+        except Exception as error:                            # noqa: BLE001
+            print(f"{args.agent}: {error}", file=sys.stderr)
+            return 1
+    else:
+        from qat_recorder.replay import run_pytest
+
+        result = run_pytest(args.directory, timeout=args.timeout or 300.0)
+
+    print(result.get("output") or "")
+    print("replay passed" if result.get("ok") else
+          f"replay FAILED (exit code {result.get('exit_code')})")
+    return 0 if result.get("ok") else 1
+
+
 def _report_dropped(session, out: Path) -> None:
     """Say what did not make it into the recording, and why.
 
@@ -448,6 +482,18 @@ def build_parser() -> argparse.ArgumentParser:
                              choices=["python", "gherkin", "both"])
     emit_parser.add_argument("--out", default="recorded")
     emit_parser.set_defaults(func=_cmd_emit)
+
+    replay_parser = sub.add_parser(
+        "replay", help="run a recorded test where the application is")
+    replay_parser.add_argument(
+        "directory", nargs="?", default="recorded",
+        help="folder holding test_recorded.py (ignored with --agent)")
+    replay_parser.add_argument(
+        "--agent", default="",
+        help="registered host to replay on. The recording was made there and "
+             "the application lives there, so that is where it can run")
+    replay_parser.add_argument("--timeout", type=float, default=0.0)
+    replay_parser.set_defaults(func=_cmd_replay)
 
     panel_parser = sub.add_parser(
         "panel", help="open the recording control panel")

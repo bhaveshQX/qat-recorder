@@ -18,6 +18,7 @@ from qat_recorder.agent.protocol import (
     AgentError, Busy, MAX_POLL_SECONDS, check_protocol, route,
 )
 from qat_recorder.agent.security import client_context, peer_fingerprint
+from qat_recorder.replay import DEFAULT_TIMEOUT
 
 
 class AgentClient:
@@ -123,6 +124,27 @@ class AgentClient:
 
     def artifacts(self, session_id: str) -> dict:
         return self._request("GET", route("artifacts", session_id=session_id))
+
+    def replay(self, session_id: str, timeout: float = 0.0) -> dict:
+        """Run the generated test on the host, and wait for the verdict.
+
+        A replay takes as long as the application takes to start and be driven,
+        which is longer than any other call here, so the socket timeout is
+        raised for this one request rather than for every request.
+        """
+        previous = self.timeout
+        self.timeout = max(self.timeout, (timeout or DEFAULT_TIMEOUT) + 30.0)
+        try:
+            return self._request("POST", route("replay", session_id=session_id),
+                                 {"timeout": timeout})
+        except AgentError as error:
+            if error.status == 404:
+                raise AgentError(
+                    "this agent is too old to replay; update qat_recorder on "
+                    "the host and restart the agent") from error
+            raise
+        finally:
+            self.timeout = previous
 
     def release(self, session_id: str) -> dict:
         return self._request("DELETE", f"/v1/sessions/{session_id}")

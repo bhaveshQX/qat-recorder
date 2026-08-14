@@ -193,6 +193,24 @@ screen must be visible to the tester over VNC or X forwarding. This does not
 affect what gets captured — `spontaneous()` is about the window system, so clicks
 over VNC are indistinguishable from local ones.
 
+**Nothing needs to be exposed to the network.** The agent binds loopback by
+default; forward it over the SSH you already have:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 you@vm            # on the tester's machine
+qat-recorder hosts add vm-01 127.0.0.1:8765 --fingerprint … --token-file …
+```
+
+Fingerprint pinning does not check the hostname, so reaching the VM's
+certificate through a tunnel on `127.0.0.1` is fine.
+
+**Replay runs on the VM, not on the tester's desk.** A recorded test launches the
+application itself, so it can only run where the application is. The panel's
+**Replay** button and `qat-recorder replay --agent vm-01` both run it on the
+host and bring back the result — the artifacts are written into
+`~/qatrec-sessions/<id>/` there as well as being downloaded, so there is no
+copying files around.
+
 ---
 
 ## Order of operations

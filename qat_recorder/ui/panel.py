@@ -159,6 +159,10 @@ class RecorderPanel(QMainWindow):
         self.act_checkpoint = QAction("Add checkpoint", self)
         self.act_undo = QAction("Undo last", self)
         self.act_save = QAction("Save…", self)
+        self.act_replay = QAction("Replay", self)
+        self.act_replay.setToolTip(
+            "Run the recording where the application is. On a remote host that "
+            "is the host, not this machine.")
 
         self.act_record.triggered.connect(self.start_recording)
         self.act_pause.triggered.connect(self.toggle_pause)
@@ -166,6 +170,7 @@ class RecorderPanel(QMainWindow):
         self.act_checkpoint.triggered.connect(self.arm_checkpoint)
         self.act_undo.triggered.connect(self.undo_last)
         self.act_save.triggered.connect(self.save_session)
+        self.act_replay.triggered.connect(self.replay_session)
 
         for action in (self.act_record, self.act_pause, self.act_stop):
             bar.addAction(action)
@@ -174,6 +179,7 @@ class RecorderPanel(QMainWindow):
             bar.addAction(action)
         bar.addSeparator()
         bar.addAction(self.act_save)
+        bar.addAction(self.act_replay)
 
     def _build_body(self, lib_path: str, app_path: str, app_name: str) -> None:
         central = QWidget()
@@ -409,6 +415,33 @@ class RecorderPanel(QMainWindow):
             return
         self.statusBar().showMessage(f"Wrote {len(written)} file(s) to {directory}")
 
+    def replay_session(self) -> None:
+        """Run what was just recorded, where the application is.
+
+        Blocking on purpose. A replay is a single question with a yes or no
+        answer, and the operator is asking it deliberately -- a progress dialog
+        that could be cancelled halfway would leave an application running on
+        someone else's screen.
+        """
+        if self.controller is None:
+            return
+        self.statusBar().showMessage("Replaying…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            result = self.controller.replay()
+        except Exception as error:                            # noqa: BLE001
+            self._warn(f"Could not replay.\n\n{error}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        verdict = "passed" if result.get("ok") else "FAILED"
+        self.statusBar().showMessage(f"Replay {verdict}")
+        self.details.setPlainText(
+            f"replay {verdict}   (exit code {result.get('exit_code')})\n"
+            f"in {result.get('directory', '?')}\n\n"
+            + (result.get("output") or ""))
+
     # -- callbacks ---------------------------------------------------------
 
     def _tick(self) -> None:
@@ -532,6 +565,9 @@ class RecorderPanel(QMainWindow):
         self.act_checkpoint.setEnabled(state is State.RECORDING)
         self.act_undo.setEnabled(recording or state is State.STOPPED)
         self.act_save.setEnabled(state is State.STOPPED)
+        # Only once recording has stopped: a replay launches its own copy of the
+        # application, and two instances fighting over one screen tests nothing.
+        self.act_replay.setEnabled(state is State.STOPPED)
 
         idle = state in (State.IDLE, State.STOPPED)
         for field in (self.field_app, self.field_lib, self.field_name):

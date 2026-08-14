@@ -274,6 +274,20 @@ class RemoteRecorderController:
         summary["state"] = self._state.value
         return summary
 
+    def replay(self, directory: str = "") -> dict:
+        """Run the recording on the machine that made it.
+
+        `directory` is ignored: the artifacts that matter live on the host, and
+        that is the only place a recorded test can run, because it launches the
+        application itself.
+        """
+        if not self.session_id:
+            raise ControllerError("nothing recorded")
+        try:
+            return self.client.replay(self.session_id)
+        except AgentError as error:
+            raise ControllerError(str(error)) from error
+
     def save(self, out_dir: str) -> list:
         """Fetch the generated files from the agent and write them here."""
         if not self.session_id:

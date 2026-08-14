@@ -15,11 +15,13 @@ is not one.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -93,6 +95,18 @@ class Session:
         recording = self.controller.recording
         return len(recording.actions) if recording else 0
 
+    def directory(self) -> Path:
+        """Where this session's artifacts live on the host.
+
+        Under the operator's own home directory, one folder per session, named
+        after the session rather than the application: two recordings of the
+        same application are two different things and must not overwrite each
+        other.
+        """
+        root = os.environ.get("QATREC_SESSIONS") or \
+            str(Path.home() / "qatrec-sessions")
+        return Path(root).expanduser() / self.id
+
     def describe(self) -> dict:
         return {
             "session_id": self.id,
@@ -100,6 +114,7 @@ class Session:
             "app": self.app,
             "started_at": self.started_at,
             "state": self.controller.state.value,
+            "directory": str(self.directory()),
         }
 
 
@@ -267,11 +282,40 @@ class Agent:
                 from qat_recorder.capture import dropped_report
                 files["unresolved.txt"] = dropped_report(capture.failures)
 
+            # Written on the host as well as returned. The tester gets a copy on
+            # their own machine, and the copy that can actually be *run* stays
+            # where the application is.
+            directory = session.directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "recording.json").write_text(
+                recording.dumps(), encoding="utf-8")
+            for name, text in files.items():
+                (directory / name).write_text(text, encoding="utf-8")
+
             return {
                 "session_id": session.id,
                 "recording": recording.to_dict(),
                 "files": files,
+                "directory": str(directory),
             }
+
+    def replay(self, session_id: str, timeout: float = 0.0) -> dict:
+        """Run this session's generated test, here, where the application is."""
+        from qat_recorder.replay import DEFAULT_TIMEOUT, run_pytest
+
+        session = self._require(session_id)
+        with session.lock:
+            # Recording holds the application open through Qat, and a replay
+            # launches its own copy. Running both at once means two instances
+            # fighting over one screen, which is not a test of anything.
+            if session.controller.state.value not in ("stopped", "idle"):
+                raise AgentError(
+                    "stop the recording before replaying it", 409)
+            directory = session.directory()
+            if not (directory / "test_recorded.py").exists():
+                self.artifacts(session_id)
+            return run_pytest(directory,
+                              timeout=timeout or DEFAULT_TIMEOUT)
 
     def release(self, session_id: str) -> dict:
         session = self._require(session_id)
@@ -376,6 +420,10 @@ class _Handler(BaseHTTPRequestHandler):
                         body.get("args") or {}))
                 if tail == "artifacts" and method == "GET":
                     return self._send(200, agent.artifacts(session_id))
+                if tail == "replay" and method == "POST":
+                    body = self._body()
+                    return self._send(200, agent.replay(
+                        session_id, float(body.get("timeout") or 0.0)))
             if len(parts) == 3 and parts[:2] == ["v1", "sessions"] \
                     and method == "DELETE":
                 return self._send(200, agent.release(parts[2]))

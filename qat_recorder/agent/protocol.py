@@ -90,6 +90,11 @@ ROUTES = {
     "command": "/v1/sessions/{session_id}/command",
     # GET  -> recording.json plus generated files
     "artifacts": "/v1/sessions/{session_id}/artifacts",
+    # POST -> run the generated test ON THE HOST and return the result.
+    # A recorded test launches the application itself, so it can only run where
+    # the application is. Without this the tester has to copy the file to the VM
+    # by hand, which is the errand the agent exists to remove.
+    "replay": "/v1/sessions/{session_id}/replay",
 }
 
 

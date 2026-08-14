@@ -108,6 +108,8 @@ class RecorderController:
         self.session: Optional[CaptureSession] = None
         self.context = None
         self.registered_name = "_qat_recorder_session"
+        #: Where `save()` last wrote, so a replay knows what to run.
+        self.saved_to = ""
 
         self.events_seen = 0
         self.events_dropped = 0
@@ -375,7 +377,26 @@ class RecorderController:
             path = out / name
             path.write_text(text, encoding="utf-8")
             written.append(str(path))
+        self.saved_to = str(out)
         return written
+
+    def replay(self, directory: str = "") -> dict:
+        """Run the generated test on this machine.
+
+        The recorded test launches the application itself, so it can only run
+        where the application is. For a local session that is here; for a
+        session driven from another machine, the agent calls this on the host,
+        which is the point -- nobody should have to copy a file across to find
+        out whether their recording replays.
+        """
+        from qat_recorder.replay import run_pytest                # noqa: PLC0415
+
+        target = directory or self.saved_to
+        if not target:
+            target = str(Path(tempfile.gettempdir()) /
+                         f"qatrec-{self.registered_name}")
+            self.save(target)
+        return run_pytest(target)
 
     # -- helpers -----------------------------------------------------------
 
