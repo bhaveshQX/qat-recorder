@@ -180,8 +180,9 @@ def _call_for(action, constants: dict) -> list:
     elif action.kind is ActionKind.SHORTCUT:
         lines.append(f"    qat.shortcut({target}, {action.args.get('keys', '')!r})")
     elif action.kind is ActionKind.WHEEL:
-        lines.append(f"    qat.mouse_wheel({target}, xDegrees={action.args.get('dx', 0)},"
-                     f" yDegrees={action.args.get('dy', 0)})")
+        # snake_case: Qat's Python API is, even where the Qt property is not.
+        lines.append(f"    qat.mouse_wheel({target}, x_degrees={action.args.get('dx', 0)},"
+                     f" y_degrees={action.args.get('dy', 0)})")
     elif action.kind is ActionKind.DRAG:
         lines.append(f"    qat.mouse_drag({target}, dx={action.args.get('dx', 0)},"
                      f" dy={action.args.get('dy', 0)})")

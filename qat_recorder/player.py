@@ -102,8 +102,10 @@ class Player:
         elif action.kind is ActionKind.SHORTCUT:
             qat.shortcut(target, action.args.get("keys", ""))
         elif action.kind is ActionKind.WHEEL:
-            qat.mouse_wheel(target, xDegrees=action.args.get("dx", 0),
-                            yDegrees=action.args.get("dy", 0))
+            # x_degrees, not xDegrees: Qat's Python API is snake_case even where
+            # the Qt property it wraps is not.
+            qat.mouse_wheel(target, x_degrees=action.args.get("dx", 0),
+                            y_degrees=action.args.get("dy", 0))
         elif action.kind is ActionKind.DRAG:
             qat.mouse_drag(target, dx=action.args.get("dx", 0),
                            dy=action.args.get("dy", 0))

@@ -10,7 +10,11 @@ requires-python = ">=3.9"
 dependencies = ["qat>=1.7"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "PySide6-Essentials"]
+# `qat` is here as well as in dependencies on purpose: tests/test_generated_api.py
+# checks every generated call against Qat's real signatures with inspect, which
+# is the only thing that catches a call written from memory. It needs the
+# package present, not a running application.
+dev = ["pytest>=7", "PySide6-Essentials", "qat>=1.7"]
 # The control panel is the only part that needs Qt bindings in the recorder
 # process itself; capture, generation and replay do not.
 ui = ["PySide6-Essentials"]
