@@ -47,6 +47,71 @@ def panel(qt_app):
     widget.deleteLater()
 
 
+# --- the saved suite -------------------------------------------------------
+
+@pytest.fixture()
+def suite(panel, tmp_path, monkeypatch):
+    """A panel whose library is a temporary directory holding two tests."""
+    monkeypatch.setenv("QATREC_TESTS", str(tmp_path))
+    from qat_recorder.library import TestLibrary
+
+    library = TestLibrary()
+    library.save("sample", "First flow",
+                 {"test_recorded.py": "def test_a():\n    assert True\n"})
+    library.save("sample", "Second flow",
+                 {"test_recorded.py": "def test_b():\n    assert False\n"})
+    return panel
+
+
+def test_saved_tests_are_listed_for_this_application(suite):
+    suite.refresh_tests()
+    assert suite.tests.rowCount() == 2
+    assert suite.tests.item(0, 0).text() == "First flow"
+
+
+def test_another_applications_tests_are_not_listed(suite, tmp_path):
+    from qat_recorder.library import TestLibrary
+
+    TestLibrary().save("something-else", "Not mine",
+                       {"test_recorded.py": "def test_c():\n    pass\n"})
+    suite.refresh_tests()
+    names = [suite.tests.item(row, 0).text()
+             for row in range(suite.tests.rowCount())]
+    assert "Not mine" not in names
+
+
+def test_running_the_suite_reports_a_verdict_per_test(suite, monkeypatch):
+    """One passes, one fails; the panel must say which, not just "1 of 2"."""
+    def fake_replay(test_id, timeout=0.0):
+        return {"ok": test_id.endswith("first-flow"), "output": "output here",
+                "test": test_id}
+
+    monkeypatch.setattr(suite.controller, "replay_test", fake_replay)
+    suite.refresh_tests()
+    suite.run_all_tests()
+
+    assert "1 of 2 passed" in suite.details.toPlainText()
+    assert "PASS  First flow" in suite.details.toPlainText()
+    assert "FAIL  Second flow" in suite.details.toPlainText()
+    # And the verdict stays visible against the row it belongs to.
+    verdicts = {suite.tests.item(row, 0).text(): suite.tests.item(row, 3).text()
+                for row in range(suite.tests.rowCount())}
+    assert verdicts == {"First flow": "passed", "Second flow": "FAILED"}
+
+
+def test_running_with_nothing_selected_says_so(suite):
+    suite.refresh_tests()
+    suite.tests.setCurrentCell(-1, -1)
+    suite.run_selected_test()
+    assert "Select a test" in suite.statusBar().currentMessage()
+
+
+def test_the_suite_cannot_be_run_while_recording(suite):
+    suite.start_recording()
+    assert not suite.btn_run_all.isEnabled()
+    assert not suite.btn_run_one.isEnabled()
+
+
 # --- wiring ----------------------------------------------------------------
 
 def test_panel_starts_idle_with_only_record_enabled(panel):

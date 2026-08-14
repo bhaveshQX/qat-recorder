@@ -274,6 +274,30 @@ class RemoteRecorderController:
         summary["state"] = self._state.value
         return summary
 
+    def save_as(self, name: str) -> dict:
+        """Keep this recording in the HOST's library, not on this machine.
+
+        That is where it can be run, and where the next tester will look for it.
+        """
+        if not self.session_id:
+            raise ControllerError("nothing recorded")
+        try:
+            return self.client.keep(self.session_id, name)
+        except AgentError as error:
+            raise ControllerError(str(error)) from error
+
+    def list_tests(self, app: str = "") -> list:
+        try:
+            return self.client.tests(app).get("tests", [])
+        except AgentError as error:
+            raise ControllerError(str(error)) from error
+
+    def replay_test(self, test_id: str, timeout: float = 0.0) -> dict:
+        try:
+            return self.client.run_test(test_id, timeout)
+        except AgentError as error:
+            raise ControllerError(str(error)) from error
+
     def replay(self, directory: str = "") -> dict:
         """Run the recording on the machine that made it.
 

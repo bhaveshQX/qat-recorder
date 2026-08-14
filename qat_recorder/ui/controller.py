@@ -349,6 +349,19 @@ class RecorderController:
         }
 
     def save(self, out_dir: str) -> list:
+        """Write the artifacts into a directory of the caller's choosing."""
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        written = []
+        for name, text in self.generated_files().items():
+            path = out / name
+            path.write_text(text, encoding="utf-8")
+            written.append(str(path))
+        self.saved_to = str(out)
+        return written
+
+    def generated_files(self) -> dict:
+        """The artifacts for the current recording, as name -> text."""
         from qat_recorder.emit import (  # noqa: PLC0415
             emit_gherkin, emit_python, emit_steps)
 
@@ -359,26 +372,46 @@ class RecorderController:
         if problems:
             raise ControllerError("recording is not valid: " + "; ".join(problems))
 
-        out = Path(out_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        written = []
-        files = [
-            ("recording.json", recording.dumps()),
-            ("test_recorded.py", emit_python(recording)),
-            ("recorded.feature", emit_gherkin(recording)),
-            ("steps.py", emit_steps(recording)),
-        ]
+        files = {
+            "recording.json": recording.dumps(),
+            "test_recorded.py": emit_python(recording),
+            "recorded.feature": emit_gherkin(recording),
+            "steps.py": emit_steps(recording),
+        }
         if self.session is not None and self.session.failures:
             from qat_recorder.capture import dropped_report  # noqa: PLC0415
-            files.append(("unresolved.txt",
-                          dropped_report(self.session.failures)))
+            files["unresolved.txt"] = dropped_report(self.session.failures)
+        return files
 
-        for name, text in files:
-            path = out / name
-            path.write_text(text, encoding="utf-8")
-            written.append(str(path))
-        self.saved_to = str(out)
-        return written
+    def save_as(self, name: str) -> dict:
+        """Keep this recording in the library, under a name, as its own test."""
+        from qat_recorder.library import TestLibrary        # noqa: PLC0415
+
+        case = TestLibrary().save(
+            app=self.app_name or Path(self.app_path).name or "app",
+            name=name,
+            files=self.generated_files(),
+            app_path=self.app_path,
+            summary=self.summary())
+        self.saved_to = str(case.directory)
+        return case.to_dict()
+
+    def list_tests(self, app: str = "") -> list:
+        from qat_recorder.library import TestLibrary        # noqa: PLC0415
+
+        chosen = app or self.app_name or Path(self.app_path).name
+        return [case.to_dict() for case in TestLibrary().list(chosen)]
+
+    def replay_test(self, test_id: str, timeout: float = 0.0) -> dict:
+        from qat_recorder.library import TestLibrary        # noqa: PLC0415
+        from qat_recorder.replay import DEFAULT_TIMEOUT, run_pytest
+
+        case = TestLibrary().get(test_id)
+        result = run_pytest(case.directory,
+                            timeout=timeout or DEFAULT_TIMEOUT)
+        result["test"] = case.id
+        result["name"] = case.name
+        return result
 
     def replay(self, directory: str = "") -> dict:
         """Run the generated test on this machine.

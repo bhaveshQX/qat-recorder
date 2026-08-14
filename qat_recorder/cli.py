@@ -272,6 +272,70 @@ def _cmd_replay(args) -> int:
     return 0 if result.get("ok") else 1
 
 
+def _cmd_tests(args) -> int:
+    """The saved suite: list it, or run one test or all of them.
+
+    Runs where the application is — on the agent's host with --agent, here
+    without one — because a recorded test launches the application itself.
+    """
+    remote = None
+    if args.agent:
+        from qat_recorder.agent.registry import Registry, client_for
+        try:
+            remote = client_for(Registry.load().resolve(args.agent))
+        except Exception as error:                            # noqa: BLE001
+            print(f"{args.agent}: {error}", file=sys.stderr)
+            return 1
+
+    if remote is not None:
+        listing = remote.tests(args.app)
+        cases = listing.get("tests", [])
+        where = f"{args.agent}:{listing.get('root', '?')}"
+    else:
+        from qat_recorder.library import TestLibrary
+        library = TestLibrary()
+        cases = [case.to_dict() for case in library.list(args.app)]
+        where = str(library.root)
+
+    if args.tests_command == "list":
+        if not cases:
+            print(f"no saved tests in {where}")
+            return 0
+        print(f"{len(cases)} test(s) in {where}\n")
+        for case in cases:
+            print(f"  {case['id']:<40} {case['steps']:>3} steps  "
+                  f"{(case.get('created') or '')[:10]}")
+            if case.get("needs_review"):
+                print(f"  {'':<40} {case['needs_review']} step(s) need review")
+        return 0
+
+    chosen = ([case for case in cases if case["id"] == args.test]
+              if getattr(args, "test", "") else cases)
+    if not chosen:
+        print(f"nothing to run in {where}", file=sys.stderr)
+        return 1
+
+    # One after another, never in parallel: each drives the real UI of a real
+    # application, and they would be fighting over one screen.
+    failures = 0
+    for index, case in enumerate(chosen, start=1):
+        print(f"\n[{index}/{len(chosen)}] {case['id']}")
+        if remote is not None:
+            result = remote.run_test(case["id"], args.timeout)
+        else:
+            from qat_recorder.replay import run_pytest
+            result = run_pytest(case["directory"], timeout=args.timeout or 300.0)
+        if result.get("ok"):
+            print("  passed")
+        else:
+            failures += 1
+            print("  FAILED")
+            print(result.get("output") or "")
+
+    print(f"\n{len(chosen) - failures}/{len(chosen)} passed")
+    return 1 if failures else 0
+
+
 def _report_dropped(session, out: Path) -> None:
     """Say what did not make it into the recording, and why.
 
@@ -494,6 +558,22 @@ def build_parser() -> argparse.ArgumentParser:
              "the application lives there, so that is where it can run")
     replay_parser.add_argument("--timeout", type=float, default=0.0)
     replay_parser.set_defaults(func=_cmd_replay)
+
+    tests_parser = sub.add_parser(
+        "tests", help="the saved suite: list it, or run it")
+    tests_sub = tests_parser.add_subparsers(dest="tests_command", required=True)
+    for name, help_text in (("list", "show saved tests"),
+                            ("run", "run one saved test, or all of them")):
+        child = tests_sub.add_parser(name, help=help_text)
+        child.add_argument("--app", default="",
+                           help="only this application's tests")
+        child.add_argument("--agent", default="",
+                           help="the host holding the suite (default: here)")
+        child.add_argument("--timeout", type=float, default=0.0)
+        if name == "run":
+            child.add_argument("test", nargs="?", default="",
+                               help="test id (app/name). Omit to run them all")
+    tests_parser.set_defaults(func=_cmd_tests)
 
     panel_parser = sub.add_parser(
         "panel", help="open the recording control panel")

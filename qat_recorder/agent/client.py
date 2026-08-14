@@ -13,6 +13,7 @@ import hmac
 import http.client
 import json
 from typing import Optional
+from urllib.parse import quote
 
 from qat_recorder.agent.protocol import (
     AgentError, Busy, MAX_POLL_SECONDS, check_protocol, route,
@@ -124,6 +125,23 @@ class AgentClient:
 
     def artifacts(self, session_id: str) -> dict:
         return self._request("GET", route("artifacts", session_id=session_id))
+
+    def keep(self, session_id: str, name: str) -> dict:
+        return self._request("POST", route("keep", session_id=session_id),
+                             {"name": name})["test"]
+
+    def tests(self, app: str = "") -> dict:
+        path = route("tests") + (f"?app={quote(app)}" if app else "")
+        return self._request("GET", path)
+
+    def run_test(self, test_id: str, timeout: float = 0.0) -> dict:
+        previous = self.timeout
+        self.timeout = max(self.timeout, (timeout or DEFAULT_TIMEOUT) + 30.0)
+        try:
+            return self._request("POST", route("run"),
+                                 {"test": test_id, "timeout": timeout})
+        finally:
+            self.timeout = previous
 
     def replay(self, session_id: str, timeout: float = 0.0) -> dict:
         """Run the generated test on the host, and wait for the verdict.

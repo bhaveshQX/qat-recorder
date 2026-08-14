@@ -299,6 +299,53 @@ class Agent:
                 "directory": str(directory),
             }
 
+    # -- the library -------------------------------------------------------
+
+    def keep(self, session_id: str, name: str) -> dict:
+        """Promote a finished session into the host's suite, under a name."""
+        session = self._require(session_id)
+        with session.lock:
+            try:
+                return {"test": session.controller.save_as(name)}
+            except Exception as error:                        # noqa: BLE001
+                raise AgentError(str(error), 409)
+
+    def tests(self, app: str = "") -> dict:
+        from qat_recorder.library import TestLibrary
+
+        library = TestLibrary()
+        return {"tests": [case.to_dict() for case in library.list(app)],
+                "apps": library.apps(),
+                "root": str(library.root)}
+
+    def run_test(self, test_id: str, timeout: float = 0.0) -> dict:
+        """Run one saved test. Deliberately independent of any session.
+
+        A suite is worth more than the recording session that made it: a tester
+        joining on Tuesday should be able to run what someone recorded on
+        Monday, and the agent has long since forgotten that session.
+        """
+        from qat_recorder.library import TestLibrary
+        from qat_recorder.replay import DEFAULT_TIMEOUT, run_pytest
+
+        with self.lock:
+            busy = (self.session is not None
+                    and self.session.controller.state.value
+                    not in ("stopped", "idle"))
+        if busy:
+            raise AgentError(
+                "a recording is in progress on this host; stop it first", 409)
+
+        try:
+            case = TestLibrary().get(test_id)
+        except LookupError as error:
+            raise AgentError(str(error), 404)
+
+        result = run_pytest(case.directory, timeout=timeout or DEFAULT_TIMEOUT)
+        result["test"] = case.id
+        result["name"] = case.name
+        return result
+
     def replay(self, session_id: str, timeout: float = 0.0) -> dict:
         """Run this session's generated test, here, where the application is."""
         from qat_recorder.replay import DEFAULT_TIMEOUT, run_pytest
@@ -402,6 +449,13 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send(200, agent.applications())
             if parts == ["v1", "sessions"] and method == "GET":
                 return self._send(200, agent.current())
+            if parts == ["v1", "tests"] and method == "GET":
+                return self._send(200, agent.tests(
+                    (query.get("app") or [""])[0]))
+            if parts == ["v1", "tests", "run"] and method == "POST":
+                body = self._body()
+                return self._send(200, agent.run_test(
+                    body.get("test", ""), float(body.get("timeout") or 0.0)))
             if parts == ["v1", "sessions"] and method == "POST":
                 body = self._body()
                 return self._send(201, agent.start_session(
@@ -424,6 +478,10 @@ class _Handler(BaseHTTPRequestHandler):
                     body = self._body()
                     return self._send(200, agent.replay(
                         session_id, float(body.get("timeout") or 0.0)))
+                if tail == "keep" and method == "POST":
+                    body = self._body()
+                    return self._send(201, agent.keep(
+                        session_id, body.get("name", "")))
             if len(parts) == 3 and parts[:2] == ["v1", "sessions"] \
                     and method == "DELETE":
                 return self._send(200, agent.release(parts[2]))

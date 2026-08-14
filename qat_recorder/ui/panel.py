@@ -21,9 +21,9 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPlainTextEdit, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow,
+    QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTabWidget,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from qat_recorder.ir import Action, ActionKind, Robustness
@@ -33,6 +33,11 @@ from qat_recorder.ui.controller import ControllerError, RecorderController, Stat
 def _is_step(action: Action) -> bool:
     """Whether an action is something the operator did, rather than bookkeeping."""
     return action.kind is not ActionKind.LAUNCH
+
+
+def _indent(text: str, prefix: str = "        ") -> str:
+    """Failure output, set in from the verdict it belongs to."""
+    return "\n".join(prefix + line for line in text.splitlines())
 
 
 def _registered_hosts() -> list:
@@ -159,6 +164,10 @@ class RecorderPanel(QMainWindow):
         self.act_checkpoint = QAction("Add checkpoint", self)
         self.act_undo = QAction("Undo last", self)
         self.act_save = QAction("Save…", self)
+        self.act_keep = QAction("Keep as test…", self)
+        self.act_keep.setToolTip(
+            "Add this recording to the suite for this application, under a "
+            "name, on the machine that can run it.")
         self.act_replay = QAction("Replay", self)
         self.act_replay.setToolTip(
             "Run the recording where the application is. On a remote host that "
@@ -170,6 +179,7 @@ class RecorderPanel(QMainWindow):
         self.act_checkpoint.triggered.connect(self.arm_checkpoint)
         self.act_undo.triggered.connect(self.undo_last)
         self.act_save.triggered.connect(self.save_session)
+        self.act_keep.triggered.connect(self.keep_session)
         self.act_replay.triggered.connect(self.replay_session)
 
         for action in (self.act_record, self.act_pause, self.act_stop):
@@ -179,6 +189,7 @@ class RecorderPanel(QMainWindow):
             bar.addAction(action)
         bar.addSeparator()
         bar.addAction(self.act_save)
+        bar.addAction(self.act_keep)
         bar.addAction(self.act_replay)
 
     def _build_body(self, lib_path: str, app_path: str, app_name: str) -> None:
@@ -221,7 +232,15 @@ class RecorderPanel(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.table.currentCellChanged.connect(lambda *_: self._show_details())
-        splitter.addWidget(self.table)
+
+        # Two views of the left pane: the session being recorded now, and the
+        # tests already saved for this application. Tabs rather than a third
+        # column, because only one of them is ever being read at a time.
+        self.left = QTabWidget()
+        self.left.addTab(self.table, "This session")
+        self.left.addTab(self._build_library(), "Saved tests")
+        self.left.currentChanged.connect(self._tab_changed)
+        splitter.addWidget(self.left)
 
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
@@ -237,6 +256,43 @@ class RecorderPanel(QMainWindow):
         outer.addWidget(self.counters)
 
         self.setCentralWidget(central)
+
+    def _build_library(self) -> QWidget:
+        """The saved tests for this application, and the ways to run them."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.tests = QTableWidget(0, 4)
+        self.tests.setHorizontalHeaderLabels(
+            ["Test", "Steps", "Recorded", "Last run"])
+        self.tests.verticalHeader().setVisible(False)
+        self.tests.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tests.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        head = self.tests.horizontalHeader()
+        head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
+            head.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.tests.currentCellChanged.connect(lambda *_: self._show_test())
+        layout.addWidget(self.tests, 1)
+
+        row = QHBoxLayout()
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_run_one = QPushButton("Run selected")
+        self.btn_run_all = QPushButton("Run all")
+        self.btn_refresh.clicked.connect(self.refresh_tests)
+        self.btn_run_one.clicked.connect(self.run_selected_test)
+        self.btn_run_all.clicked.connect(self.run_all_tests)
+        row.addWidget(self.btn_refresh)
+        row.addStretch(1)
+        row.addWidget(self.btn_run_one)
+        row.addWidget(self.btn_run_all)
+        layout.addLayout(row)
+
+        #: id -> the last result, so a suite run leaves a visible verdict per row
+        self._results: dict = {}
+        self._cases: list = []
+        return page
 
     def _with_browse(self, field: QLineEdit) -> QWidget:
         wrapper = QWidget()
@@ -415,6 +471,145 @@ class RecorderPanel(QMainWindow):
             return
         self.statusBar().showMessage(f"Wrote {len(written)} file(s) to {directory}")
 
+    # -- the library -------------------------------------------------------
+
+    def keep_session(self) -> None:
+        """Save this recording into the suite, under a name.
+
+        Named, because a suite is read by people: `add-a-torrent` says what
+        broke when it fails and `session-a7f3c091` does not. Saved on the host
+        that recorded it, because that is the only machine it can run on.
+        """
+        if self.controller is None:
+            return
+        name, accepted = QInputDialog.getText(
+            self, "Keep this test", "Name it — what does this test do?")
+        if not accepted or not name.strip():
+            return
+        try:
+            case = self.controller.save_as(name.strip())
+        except Exception as error:                            # noqa: BLE001
+            self._warn(f"Could not keep this test.\n\n{error}")
+            return
+        self.statusBar().showMessage(
+            f"Kept as {case.get('name')} in {case.get('directory')}")
+        self.refresh_tests()
+        self.left.setCurrentIndex(1)
+
+    def refresh_tests(self) -> None:
+        if self.controller is None:
+            return
+        try:
+            self._cases = self.controller.list_tests(self.field_name.text().strip())
+        except Exception as error:                            # noqa: BLE001
+            self.statusBar().showMessage(f"Could not list tests: {error}")
+            return
+
+        self.tests.setRowCount(0)
+        for case in self._cases:
+            row = self.tests.rowCount()
+            self.tests.insertRow(row)
+            result = self._results.get(case["id"])
+            verdict = "" if result is None else (
+                "passed" if result.get("ok") else "FAILED")
+            for column, text in enumerate((
+                    case.get("name", ""),
+                    str(case.get("steps", "")),
+                    (case.get("created") or "")[:16].replace("T", " "),
+                    verdict)):
+                item = QTableWidgetItem(text)
+                if column == 3 and verdict:
+                    item.setForeground(QColor(
+                        robustness_colour(Robustness.STRONG) if result.get("ok")
+                        else robustness_colour(Robustness.UNRESOLVED)))
+                self.tests.setItem(row, column, item)
+        self.statusBar().showMessage(f"{len(self._cases)} saved test(s)")
+
+    def _selected_case(self) -> Optional[dict]:
+        row = self.tests.currentRow()
+        if row < 0 or row >= len(self._cases):
+            return None
+        return self._cases[row]
+
+    def run_selected_test(self) -> None:
+        case = self._selected_case()
+        if case is None:
+            self.statusBar().showMessage("Select a test to run")
+            return
+        self._run_cases([case])
+
+    def run_all_tests(self) -> None:
+        """Run the suite, one after another.
+
+        Sequential and not optional: every test drives the real UI of a real
+        application on one screen. Two at once would be two applications
+        fighting over the same pointer.
+        """
+        if not self._cases:
+            self.statusBar().showMessage("No saved tests to run")
+            return
+        self._run_cases(list(self._cases))
+
+    def _run_cases(self, cases: list) -> None:
+        if self.controller is None:
+            return
+        lines = []
+        passed = 0
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for index, case in enumerate(cases, start=1):
+                self.statusBar().showMessage(
+                    f"Running {index}/{len(cases)}: {case.get('name')}…")
+                QApplication.processEvents()
+                try:
+                    result = self.controller.replay_test(case["id"])
+                except Exception as error:                    # noqa: BLE001
+                    result = {"ok": False, "output": str(error)}
+                self._results[case["id"]] = result
+                if result.get("ok"):
+                    passed += 1
+                lines.append(
+                    f"{'PASS' if result.get('ok') else 'FAIL'}  "
+                    f"{case.get('name')}")
+                if not result.get("ok"):
+                    lines.append(_indent(result.get("output") or ""))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.refresh_tests()
+        self.statusBar().showMessage(
+            f"{passed}/{len(cases)} passed")
+        self.details.setPlainText(
+            f"{passed} of {len(cases)} passed\n\n" + "\n".join(lines))
+
+    def _show_test(self) -> None:
+        case = self._selected_case()
+        if case is None:
+            return
+        result = self._results.get(case["id"])
+        lines = [
+            f"test        {case.get('name')}",
+            f"application {case.get('app')}",
+            f"steps       {case.get('steps')}",
+            f"recorded    {case.get('created')}",
+            f"folder      {case.get('directory')}",
+        ]
+        if case.get("needs_review"):
+            lines.append(f"review      {case['needs_review']} step(s) are weak "
+                         "or fragile")
+        if case.get("unresolved"):
+            lines.append(f"dropped     {case['unresolved']} event(s) — see "
+                         "unresolved.txt in the folder")
+        if result is not None:
+            lines += ["", "last run    "
+                      + ("passed" if result.get("ok") else "FAILED"), "",
+                      result.get("output") or ""]
+        self.details.setPlainText("\n".join(lines))
+
+    def _tab_changed(self, index: int) -> None:
+        if index == 1 and not self._cases:
+            self.refresh_tests()
+
     def replay_session(self) -> None:
         """Run what was just recorded, where the application is.
 
@@ -565,9 +760,12 @@ class RecorderPanel(QMainWindow):
         self.act_checkpoint.setEnabled(state is State.RECORDING)
         self.act_undo.setEnabled(recording or state is State.STOPPED)
         self.act_save.setEnabled(state is State.STOPPED)
+        self.act_keep.setEnabled(state is State.STOPPED)
         # Only once recording has stopped: a replay launches its own copy of the
         # application, and two instances fighting over one screen tests nothing.
         self.act_replay.setEnabled(state is State.STOPPED)
+        for button in (self.btn_run_one, self.btn_run_all):
+            button.setEnabled(not recording and state is not State.PAUSED)
 
         idle = state in (State.IDLE, State.STOPPED)
         for field in (self.field_app, self.field_lib, self.field_name):

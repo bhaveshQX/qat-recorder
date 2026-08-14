@@ -95,6 +95,13 @@ ROUTES = {
     # the application is. Without this the tester has to copy the file to the VM
     # by hand, which is the errand the agent exists to remove.
     "replay": "/v1/sessions/{session_id}/replay",
+    # POST -> keep this session as a named test in the host's library
+    "keep": "/v1/sessions/{session_id}/keep",
+    # GET  -> the saved tests on this host, optionally for one application
+    "tests": "/v1/tests",
+    # POST -> run one saved test, by `app/name`. Needs no session: the suite
+    # outlives the recording that produced it.
+    "run": "/v1/tests/run",
 }
 
 
