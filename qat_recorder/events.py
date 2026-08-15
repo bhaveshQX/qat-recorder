@@ -56,7 +56,19 @@ class Locator:
     #: object and arrives through the ordinary fields above.
     menu_item: str = ""
     menu_item_name: str = ""
+    #: For a click inside a list, tree or table: which model index was hit.
+    #: Rows are not widgets either -- the viewport receives the event -- so the
+    #: view has to be asked. -1 means "not an item view, or below the last row".
+    item_row: int = -1
+    item_column: int = 0
+    item_text: str = ""
+    item_view: str = ""
+    item_view_class: str = ""
     path: tuple = field(default_factory=tuple)
+
+    @property
+    def is_item(self) -> bool:
+        return self.item_row >= 0
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Locator":
@@ -68,6 +80,11 @@ class Locator:
             index=int(data.get("index", -1)),
             menu_item=str(data.get("menuItem", "")),
             menu_item_name=str(data.get("menuItemName", "")),
+            item_row=int(data.get("itemRow", -1)),
+            item_column=int(data.get("itemColumn", 0)),
+            item_text=str(data.get("itemText", "")),
+            item_view=str(data.get("itemView", "")),
+            item_view_class=str(data.get("itemViewClass", "")),
             path=tuple(
                 (str(item.get("class", "")), str(item.get("objectName", "")))
                 for item in data.get("path", [])

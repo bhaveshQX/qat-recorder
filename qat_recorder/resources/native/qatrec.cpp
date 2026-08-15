@@ -21,6 +21,7 @@
 #include <QtCore/QDateTime>
 #include <QtCore/QEvent>
 #include <QtCore/QMetaObject>
+#include <QtCore/QModelIndex>
 #include <QtCore/QObject>
 #include <QtCore/QPoint>
 #include <QtCore/QString>
@@ -226,6 +227,72 @@ void appendMenuItem(std::string &out, QObject *object, const QPoint &position)
         appendString(out, "menuItemName", name);
 }
 
+// ---------------------------------------------------------------------------
+// Which item was clicked
+//
+// The same problem as menus, in the family it matters most. A list, tree or
+// table draws its rows; they are model indices, not widgets, so the click is
+// delivered to the viewport and the recorder sees "someone clicked the tree".
+// Replaying that clicks the middle of the tree, which is whatever row happens
+// to be there today.
+//
+// Qat wraps a model index in a virtual widget addressed by container, row and
+// column, so the item is nameable -- but only if the recorder knows which index
+// was hit. `QAbstractItemView::indexAt` answers, and takes viewport
+// coordinates, which is exactly what the event carries. Reached through dlsym
+// for the same reason as the menu functions: this library must not depend on
+// QtWidgets, because it is preloaded into QML applications too.
+//
+// QModelIndex itself is QtCore, so the signature can be declared honestly and
+// the row, the column and the item's text read without any further tricks.
+// ---------------------------------------------------------------------------
+
+using IndexAtFn = QModelIndex (*)(const QObject *, const QPoint &);
+
+QObject *itemViewFor(QObject *object)
+{
+    // The viewport receives the event; the view knows about items. Their
+    // coordinate systems are the same, which is why the position needs no
+    // translation.
+    if (object->inherits("QAbstractItemView"))
+        return object;
+    QObject *parent = object->parent();
+    if (parent && parent->inherits("QAbstractItemView"))
+        return parent;
+    return nullptr;
+}
+
+void appendItem(std::string &out, QObject *object, const QPoint &position)
+{
+    static IndexAtFn indexAt = reinterpret_cast<IndexAtFn>(
+        ::dlsym(RTLD_DEFAULT, "_ZNK17QAbstractItemView7indexAtERK6QPoint"));
+    if (!indexAt)
+        return;
+
+    QObject *view = itemViewFor(object);
+    if (!view)
+        return;
+
+    const QModelIndex index = indexAt(view, position);
+    if (!index.isValid())
+        return;             // in the view, but below the last row
+
+    appendInt(out, "itemRow", index.row());
+    appendInt(out, "itemColumn", index.column());
+
+    // The text is not how Qat addresses the item -- row and column are -- but
+    // it is how a person recognises it, and it lets a generated test find the
+    // row again after the contents have moved.
+    const QString text = index.data(Qt::DisplayRole).toString();
+    if (!text.isEmpty())
+        appendString(out, "itemText", toStd(text.left(200)));
+
+    // The view, so the Python side can name the container rather than guessing
+    // it from the ancestor chain.
+    appendString(out, "itemView", toStd(view->objectName()));
+    appendString(out, "itemViewClass", view->metaObject()->className());
+}
+
 void appendLocator(std::string &out, QObject *object,
                    const QPoint *position = nullptr)
 {
@@ -240,8 +307,10 @@ void appendLocator(std::string &out, QObject *object,
     if (!title.empty())
         appendString(out, "title", title);
 
-    if (position)
+    if (position) {
         appendMenuItem(out, object, *position);
+        appendItem(out, object, *position);
+    }
 
     appendInt(out, "index", siblingIndex(object));
 

@@ -94,6 +94,11 @@ class Target:
     #: cannot live inside `definition`; emitters render it as
     #: `find_all_objects(definition)[index]`.
     index: Optional[int] = None
+    #: For a row of a list, tree or table: the text it showed when it was
+    #: clicked. Qat addresses items by row number, which breaks the moment a row
+    #: is inserted above; generated code looks the text up first and uses the
+    #: recorded row only as a fallback.
+    item_text: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -103,6 +108,7 @@ class Target:
             "warnings": list(self.warnings),
             "label": self.label,
             "index": self.index,
+            "item_text": self.item_text,
         }
 
     @classmethod
@@ -114,6 +120,7 @@ class Target:
             warnings=tuple(data.get("warnings", ())),
             label=data.get("label", ""),
             index=data.get("index"),
+            item_text=data.get("item_text", ""),
         )
 
 

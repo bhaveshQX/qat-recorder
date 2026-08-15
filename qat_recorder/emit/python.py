@@ -51,6 +51,38 @@ def secret(name):
 #: menu that contains it, so a menu that is not open fails as though the menu
 #: itself had vanished -- "Unable to find object: {"objectName":"menuOptions"}"
 #: -- which sends you looking for the wrong problem entirely.
+#: Added only when the recording touches a row of a list, tree or table. Qat
+#: addresses items by row number, which is wrong the moment a row is inserted
+#: above the one that matters. The text is what the person recognised, so the
+#: text is what this looks for -- and the recorded row is kept as a fallback for
+#: views whose items have no text at all.
+ITEM_HELPER = '''
+
+def row(container, text, column=0, recorded=0, limit=500):
+    """The row of `container` showing `text`, wherever it has moved to.
+
+    Falls back to the row that was recorded when nothing matches -- an item with
+    no text, typically an icon or a checkbox column.
+    """
+    if text:
+        for index in range(limit):
+            candidate = {"container": container, "row": index, "column": column}
+            try:
+                item = qat.wait_for_object_exists(candidate, timeout=200)
+            except LookupError:
+                break
+            if str(getattr(item, "text", "")) == text:
+                item.ScrollTo()
+                return candidate
+        raise AssertionError(
+            "no row of {} says {!r}. It was row {} when this was recorded; the "
+            "contents have changed.".format(container, text, recorded))
+
+    candidate = {"container": container, "row": recorded, "column": column}
+    qat.wait_for_object_exists(candidate).ScrollTo()
+    return candidate
+'''
+
 MENU_HELPER = '''
 
 def menu_item(item):
@@ -65,6 +97,12 @@ def menu_item(item):
             "left open by an earlier step will do it.".format(
                 item["text"], item["container"])) from error
 '''
+
+
+def is_item(definition: Any) -> bool:
+    """Whether a definition addresses a row of a list, tree or table."""
+    return isinstance(definition, Mapping) and "row" in definition \
+        and "container" in definition
 
 
 def is_menu_item(definition: Any) -> bool:
@@ -108,10 +146,19 @@ def _constant_names(recording: Recording) -> dict:
     for action in recording.actions:
         if action.target is None:
             continue
-        key = _render(action.target.definition)
+        definition = action.target.definition
+        label = action.target.label
+        if is_item(definition):
+            # The constant is the view; the row is chosen at run time, by text.
+            # One constant per view rather than one per row keeps a script that
+            # touches twenty rows readable.
+            definition = definition["container"]
+            label = (definition.get("objectName") or definition.get("type")
+                     or "view")
+        key = _render(definition)
         if key in names:
             continue
-        base = _identifier(action.target.label, "object").upper()
+        base = _identifier(label, "object").upper()
         candidate = base
         suffix = 2
         while candidate in used:
@@ -123,6 +170,8 @@ def _constant_names(recording: Recording) -> dict:
 
 
 def _target_expression(action, constants: dict) -> str:
+    if is_item(action.target.definition):
+        return _item_expression(action, constants)
     definition = _render(action.target.definition)
     name = constants[definition]
     if action.target.index is None:
@@ -130,6 +179,18 @@ def _target_expression(action, constants: dict) -> str:
     # Qat definitions have no index selector, so a positional target has to be
     # expressed as a lookup. It is fragile by construction and says so above.
     return f"qat.find_all_objects({name})[{action.target.index}]"
+
+
+def _item_expression(action, constants: dict) -> str:
+    """A row, looked up by the text it showed when it was recorded."""
+    definition = action.target.definition
+    view = constants[_render(definition["container"])]
+    parts = [view, repr(action.target.item_text)]
+    column = definition.get("column", 0)
+    if column:
+        parts.append(f"column={column}")
+    parts.append(f"recorded={definition.get('row', 0)}")
+    return f"row({', '.join(parts)})"
 
 
 def _call_for(action, constants: dict) -> list:
@@ -223,9 +284,12 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     constants = _constant_names(recording)
 
     out = [HEADER.format(source=source), ""]
-    if any(action.target is not None and is_menu_item(action.target.definition)
-           for action in recording.actions):
+    definitions = [action.target.definition for action in recording.actions
+                   if action.target is not None]
+    if any(is_menu_item(definition) for definition in definitions):
         out.append(MENU_HELPER)
+    if any(is_item(definition) for definition in definitions):
+        out.append(ITEM_HELPER)
 
     for definition, name in constants.items():
         out.append(f"{name} = {definition}")

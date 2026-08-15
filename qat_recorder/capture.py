@@ -35,6 +35,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
+from qat_recorder.items import combo_owner, item_definition
 from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
 from qat_recorder.naming import NameResolver, is_editable, is_secret_field
 
@@ -178,6 +179,15 @@ SCROLLING = ("scrolling is navigation, not a step: replaying a scroll of so many
 DRAGGING = ("a drag of so many pixels across this widget has no durable "
             "meaning; what it produced -- a value, a selection -- is what a "
             "test should assert, and this widget exposes no value to read")
+
+NO_ITEM = ("the row could not be addressed through its view; clicking the view "
+           "instead would click whichever row happened to be there")
+
+NO_COMBO = ("chosen from a combo box whose own name could not be resolved, so "
+            "there is nothing durable to set the value on")
+
+ITEM_WARNING = ("a row of a view: found by its text on replay, falling back to "
+                "the recorded position")
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +371,9 @@ class CaptureSession:
         #: Qt redirects to the popup can be told apart from a real second click.
         self._menu_press_t: Optional[int] = None
         self._menu_definition: Optional[dict] = None
+        #: The same, for a row of a view: the press is the step, its release is
+        #: not a second one.
+        self._item_press_t: Optional[int] = None
         self._typing_node: Any = None
         self._typing_target: Optional[Target] = None
         self._typing_t: int = 0
@@ -516,6 +529,8 @@ class CaptureSession:
         # thing the person clicked.
         if self._handle_menu(event):
             return
+        if self._handle_item(event):
+            return
 
         resolved = self._resolve(event.target)
         if resolved is None:
@@ -580,6 +595,118 @@ class CaptureSession:
                 self._flush_value()
                 return
             self._drop(pending.event, DRAGGING)
+
+    # -- items in views ----------------------------------------------------
+
+    def _handle_item(self, event: RawEvent) -> bool:
+        """Fold a click inside a list, tree or table into a click on the row.
+
+        Returns True when the event has been dealt with here.
+
+        A combo box is handled differently and deliberately: choosing from one
+        is recorded as the value chosen, not as two clicks on a popup that only
+        exists while it is open.
+        """
+        if not event.target.is_item:
+            return False
+        if event.kind == "mouse_release":
+            # The press already produced the step; its release is not a second
+            # one. Anything else pairs normally.
+            return self._item_press_t is not None and \
+                event.t - self._item_press_t <= self.click_ms
+        if event.kind not in ("mouse_press", "mouse_double"):
+            return False
+
+        self._item_press_t = None
+        combo = combo_owner(event.target)
+        if combo:
+            return self._handle_combo(event, combo)
+
+        view = self._view_target(event)
+        if view is None:
+            return False              # let the ordinary path attribute it
+
+        definition = item_definition(view.definition, event.target.item_row,
+                                     event.target.item_column)
+        matches = self.backend.find_all(definition)
+        if len(matches) != 1:
+            # Qat cannot address this item, so the honest step is none at all;
+            # clicking the view instead would click a different row.
+            self._drop(event, NO_ITEM)
+            return True
+
+        target = Target(
+            definition=definition,
+            strategy="item",
+            # Positional by construction -- Qat addresses items by row. The
+            # generated test looks the row up by its text first, which is what
+            # makes it survive a reordering; that is a property of the emitted
+            # code, not of the definition, so the grade stays honest here.
+            robustness=Robustness.MODERATE,
+            warnings=(ITEM_WARNING,),
+            label=event.target.item_text or f"row {event.target.item_row}",
+            item_text=event.target.item_text,
+        )
+        self._flush_input()
+        self._pending = None
+        self._item_press_t = event.t
+        kind = (ActionKind.DOUBLE_CLICK if event.kind == "mouse_double"
+                else ActionKind.CONTEXT_CLICK if event.button == 2
+                else ActionKind.CLICK)
+        self.recording.add(Action(
+            kind, target=target, args=self._button_args(event),
+            t=self._elapsed(event.t)))
+        return True
+
+    def _handle_combo(self, event: RawEvent, combo_name: str) -> bool:
+        """Choosing from a combo box: record the value, not the two clicks."""
+        matches = self.backend.find_all({"objectName": combo_name})
+        if len(matches) != 1:
+            self._drop(event, NO_COMBO)
+            return True
+        node = matches[0]
+        target = self.resolver.resolve(node)
+        if target.robustness is Robustness.UNRESOLVED:
+            self._drop(event, NO_COMBO)
+            return True
+
+        self._flush_input()
+        self._pending = None
+        self._item_press_t = event.t
+        # The click that opened the popup is already in the recording, and
+        # setting the value does that job as well. Left in, replay would open
+        # the popup and leave it open over the following step.
+        self._drop_click_on(target)
+        self.recording.add(Action(
+            ActionKind.SELECT, target=target,
+            args={"property": "currentText",
+                  "value": event.target.item_text},
+            t=self._elapsed(event.t)))
+        return True
+
+    def _drop_click_on(self, target: Target) -> None:
+        """Remove a just-recorded click on this object, if that is the last step."""
+        actions = self.recording.actions
+        if not actions:
+            return
+        last = actions[-1]
+        if (last.kind is ActionKind.CLICK and last.target is not None
+                and last.target.definition == target.definition):
+            actions.pop()
+
+    def _view_target(self, event: RawEvent) -> Optional[Target]:
+        """A definition for the view holding the item that was clicked."""
+        if event.target.item_view:
+            matches = self.backend.find_all(
+                {"objectName": event.target.item_view})
+            if len(matches) == 1:
+                candidate = self.resolver.resolve(matches[0])
+                if candidate.robustness is not Robustness.UNRESOLVED:
+                    return candidate
+        # No name of its own: fall back to whatever the ordinary resolution of
+        # this event produces, which promotes a viewport to its view already.
+        resolved = self._resolve(event.target)
+        return resolved[1] if resolved else None
 
     # -- menus -------------------------------------------------------------
 
