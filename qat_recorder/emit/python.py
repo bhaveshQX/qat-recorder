@@ -100,7 +100,12 @@ def find(candidates, timeout_ms=None):
     """
     if isinstance(candidates, dict):
         candidates = [candidates]
-    limit = (timeout_ms if timeout_ms is not None else TIMEOUT_MS) / 1000.0
+    # Bounded separately from the step timeout. That one is taken from the
+    # longest pause in the session, which is right for "this application is
+    # slow" and wrong for "this object is not coming": two minutes of waiting
+    # tells you nothing that fifteen seconds did not.
+    limit = (timeout_ms if timeout_ms is not None
+             else min(TIMEOUT_MS, FIND_TIMEOUT_MS)) / 1000.0
     deadline = time.time() + limit
 
     while True:
@@ -446,6 +451,11 @@ def _call_for(action, constants: dict) -> list:
 MIN_TIMEOUT_MS = 10_000
 MAX_TIMEOUT_MS = 120_000
 
+#: A ceiling on how long to hunt for an object. Separate from the step timeout,
+#: which answers "how slow is this application"; this one answers "how long
+#: before we accept it is not there", and the answers are different.
+FIND_TIMEOUT_MS = 20_000
+
 
 def derived_timeout(recording: Recording) -> int:
     times = [action.t for action in recording.actions]
@@ -462,6 +472,12 @@ def _timeout_block(recording: Recording) -> list:
         "# taken from the longest pause in the recorded session, because that is",
         "# how long this application actually kept someone waiting.",
         f"TIMEOUT_MS = int(os.environ.get('QATREC_TIMEOUT_MS') or {timeout})",
+        "",
+        "# How long to keep looking for an object before admitting it is not",
+        "# coming. Shorter than the step timeout on purpose: waiting two",
+        "# minutes says nothing that fifteen seconds did not.",
+        f"FIND_TIMEOUT_MS = int(os.environ.get('QATREC_FIND_TIMEOUT_MS') "
+        f"or {FIND_TIMEOUT_MS})",
     ]
 
 

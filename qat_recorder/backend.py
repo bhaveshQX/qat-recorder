@@ -126,6 +126,21 @@ class QatBackend:
                 value = getattr(node, key)
             except Exception:                               # noqa: BLE001
                 continue
+            if callable(value):
+                # Qat hands back a callable when the name resolves to a Qt
+                # method, and in Qt the names that matter most are both: `text`,
+                # `value`, `currentRow`, `currentIndex`, `currentText` are each
+                # a property and a getter. Skipping them -- which this did --
+                # meant a list never reported which row was selected, an item
+                # never reported its label, and a spin box never reported its
+                # value. Three separate mysteries, one line.
+                #
+                # Only the names asked for are called, and every one of them is
+                # a getter that takes no arguments and changes nothing.
+                try:
+                    value = value()
+                except Exception:                           # noqa: BLE001
+                    continue
             if not callable(value):
                 props[key] = value
         return props
