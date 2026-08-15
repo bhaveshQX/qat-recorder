@@ -710,6 +710,13 @@ class CaptureSession:
             self._note_unlabelled_row(definition, matches[0])
 
         target = self._item_target(definition, text, row)
+        # The view's own way of saying what is chosen, recorded whichever route
+        # found the row. It is the step's second way to succeed, and a step with
+        # one way is a step that fails the first time that way stops working.
+        args = self._button_args(event)
+        select = self._selection_property_of(node)
+        if select:
+            args["select"] = select
         self._flush_input()
         self._pending = None
         self._item_press_t = event.t
@@ -717,9 +724,19 @@ class CaptureSession:
                 else ActionKind.CONTEXT_CLICK if event.button == 2
                 else ActionKind.CLICK)
         self.recording.add(Action(
-            kind, target=target, args=self._button_args(event),
-            t=self._elapsed(event.t)))
+            kind, target=target, args=args, t=self._elapsed(event.t)))
         return True
+
+    def _selection_property_of(self, node) -> str:
+        """The property this view uses to say what is chosen, if it has one."""
+        try:
+            properties = self.backend.properties(
+                node, keys=("currentRow", "currentIndex"))
+        except TypeError:            # a backend that predates the keys argument
+            properties = self.backend.properties(node)
+        except Exception:                                    # noqa: BLE001
+            return ""
+        return selection_property(properties)
 
     def _handle_combo(self, event: RawEvent, combo_name: str) -> bool:
         """Choosing from a combo box: record the value, not the two clicks."""
@@ -1042,7 +1059,7 @@ class CaptureSession:
             # A row number is a means, not an end. Turn it into a click on the
             # row itself, identified by its text, which is what the person
             # actually did and what survives the list being reordered.
-            item = self._item_from_row(target, value, when)
+            item = self._item_from_row(target, value, when, prop)
             if item is not None:
                 return
 
@@ -1051,8 +1068,12 @@ class CaptureSession:
             args={"property": prop, "value": value},
             t=self._elapsed(when)))
 
-    def _item_from_row(self, view: Target, row, when: int):
-        """Turn "row 2 is selected" into a click on the row that says X."""
+    def _item_from_row(self, view: Target, row, when: int, prop: str = ""):
+        """Turn "row 2 is selected" into a click on the row that says X.
+
+        `prop` is how the view said it, and is kept: setting it again is the
+        step's second way to work, for views that will not allow an item click.
+        """
         try:
             index = int(row)
         except (TypeError, ValueError):
@@ -1071,6 +1092,7 @@ class CaptureSession:
         return self.recording.add(Action(
             ActionKind.CLICK,
             target=self._item_target(definition, text, index),
+            args={"select": prop} if prop else {},
             t=self._elapsed(when)))
 
     def _note_unlabelled_row(self, definition: dict, node) -> None:

@@ -103,7 +103,7 @@ def test_definitions_can_be_replaced_from_an_object_map():
         robustness=Robustness.WEAK, label="OK"), t=0.0))
 
     source = emit_python(recording)
-    assert "OK = override('OK', {'text': 'OK', 'type': 'QPushButton'})" in source
+    assert "OK = override('OK', [{'text': 'OK', 'type': 'QPushButton'}])" in source
     assert "def override(name, definition):" in source
     compile(source, "generated.py", "exec")
 

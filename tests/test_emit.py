@@ -101,8 +101,10 @@ def test_definitions_become_named_constants(recording):
     """Each goes through `override` so an object map can replace it without
     anyone editing the steps that use it."""
     source = emit_python(recording)
-    assert ("LOGINBUTTON = override('LOGINBUTTON', {'objectName': "
-            "'loginButton'})") in source
+    # A list, best first: every definition that identified the object when it
+    # was recorded, so one renamed property cannot break the step.
+    assert ("LOGINBUTTON = override('LOGINBUTTON', [{'objectName': "
+            "'loginButton'}") in source
 
 
 def test_a_menu_step_clicks_the_item_by_name():
@@ -119,10 +121,10 @@ def test_a_menu_step_clicks_the_item_by_name():
                        button=1, x=40, y=30, menu_item="&Preferences"))
 
     source = emit_python(capture.finish())
-    assert ("OPTIONS = override('OPTIONS', {'container': {'objectName': "
-            "'menubar'}, 'text': 'Options'})") in source
-    assert "menu_item(OPTIONS)  # opens the menu" in source
-    assert "menu_item(PREFERENCES)" in source
+    assert ("OPTIONS = override('OPTIONS', [{'container': {'objectName': "
+            "'menubar'}, 'text': 'Options'}") in source
+    assert "menu_item(find(OPTIONS))  # opens the menu" in source
+    assert "menu_item(find(PREFERENCES))" in source
     compile(source, "generated.py", "exec")
 
 
@@ -150,7 +152,7 @@ def test_the_menu_helper_is_absent_when_no_menu_was_used(recording):
 
 def test_ordinary_clicks_carry_no_coordinates(recording):
     source = emit_python(recording)
-    assert "qat.mouse_click(LOGINBUTTON)" in source
+    assert "qat.mouse_click(find(LOGINBUTTON))" in source
 
 
 def test_emitting_an_invalid_recording_is_refused():

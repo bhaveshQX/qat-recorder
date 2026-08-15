@@ -130,5 +130,6 @@ def test_no_step_ever_targets_a_combo_popup():
 
     source = emit_python(capture.finish())
     assert "QComboBoxListView" not in source
-    assert "qat.wait_for_object(ENVSELECTOR).currentText = 'Production'" in source
+    assert ("qat.wait_for_object(find(ENVSELECTOR)).currentText = 'Production'"
+            in source)
     compile(source, "generated.py", "exec")

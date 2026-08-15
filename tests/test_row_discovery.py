@@ -181,7 +181,7 @@ def test_a_view_whose_rows_cannot_be_listed_sets_the_property_instead():
     assert step.args == {"property": "currentRow", "value": 2}
 
     source = emit_python(recording)
-    assert "qat.wait_for_object(TABSELECTION).currentRow = 2" in source
+    assert "qat.wait_for_object(find(TABSELECTION)).currentRow = 2" in source
     compile(source, "generated.py", "exec")
 
 

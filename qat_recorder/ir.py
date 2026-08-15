@@ -99,6 +99,19 @@ class Target:
     #: is inserted above; generated code looks the text up first and uses the
     #: recorded row only as a fallback.
     item_text: str = ""
+    #: Other definitions that also identified this object uniquely when it was
+    #: recorded, best first. A step that carries only one selector fails the day
+    #: that selector changes; one carrying several tries the next.
+    alternatives: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+
+    @property
+    def candidates(self) -> list:
+        """Every definition to try at replay, best first."""
+        found = [dict(self.definition)]
+        for other in self.alternatives:
+            if dict(other) not in found:
+                found.append(dict(other))
+        return found
 
     def to_dict(self) -> dict:
         return {
@@ -109,6 +122,7 @@ class Target:
             "label": self.label,
             "index": self.index,
             "item_text": self.item_text,
+            "alternatives": [dict(other) for other in self.alternatives],
         }
 
     @classmethod
@@ -121,6 +135,8 @@ class Target:
             label=data.get("label", ""),
             index=data.get("index"),
             item_text=data.get("item_text", ""),
+            alternatives=tuple(dict(other)
+                               for other in data.get("alternatives", ())),
         )
 
 

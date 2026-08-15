@@ -128,7 +128,7 @@ def test_a_value_step_sets_the_value_through_the_object():
     nodes["root"].children_list[-1].props["value"] = 8077
 
     source = emit_python(capture.finish())
-    assert "qat.wait_for_object(PORTBOX).value = 8077" in source
+    assert "qat.wait_for_object(find(PORTBOX)).value = 8077" in source
     compile(source, "generated.py", "exec")
 
 

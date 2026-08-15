@@ -76,10 +76,49 @@ def _overrides():
     except (OSError, ValueError):
         return {}
     return {name: value for name, value in loaded.items()
-            if not name.startswith("_") and isinstance(value, dict)}
+            if not name.startswith("_") and isinstance(value, (dict, list))}
 
 
 OVERRIDES = _overrides()
+
+
+def find(candidates, timeout_ms=None):
+    """The first of these definitions the application actually has, right now.
+
+    Every step carries several ways to identify its object -- an objectName, the
+    same plus a type, the text, each of those narrowed by a container -- and all
+    of them were checked against the running application when the step was
+    recorded. Trying them in order is what stops one renamed property from
+    breaking a test that had three other ways to find the same button.
+
+    It also waits. A control that is not there yet and a control that cannot be
+    found are the same thing to a script, and the cure for both is to keep
+    asking until the step's own timeout runs out. Waiting for it to be *usable*
+    -- visible and enabled -- rather than merely present, because a dialog
+    exists in the object tree before it has been drawn, and clicking into one
+    that has not been drawn fails as "out-of-bounds".
+    """
+    if isinstance(candidates, dict):
+        candidates = [candidates]
+    limit = (timeout_ms if timeout_ms is not None else TIMEOUT_MS) / 1000.0
+    deadline = time.time() + limit
+
+    while True:
+        for definition in candidates:
+            try:
+                qat.wait_for_object(definition, timeout=250)
+                return definition
+            except (LookupError, RuntimeError):
+                continue
+        if time.time() >= deadline:
+            break
+        time.sleep(0.1)
+
+    # Nothing matched. Say what was tried, in order, because the first one is
+    # the one that used to work and the rest say how hard we looked.
+    raise AssertionError(
+        "none of these found a usable object after {:.0f}s:\\n  {}".format(
+            limit, "\\n  ".join(repr(one) for one in candidates)))
 
 
 def override(name, definition):
@@ -126,29 +165,58 @@ def row(container, text, column=0, recorded=0, limit=500):
     return candidate
 
 
-def click_row(container, text, column=0, recorded=0, **kwargs):
-    """Click a row, waiting for it to actually be on screen.
+def click_row(container, text, column=0, recorded=0, select="", **kwargs):
+    """Choose a row: by clicking it, or by telling the view to select it.
 
-    Qat refuses to click an item whose rectangle lies outside its view, and
-    says so rather than waiting. That happens for two ordinary reasons -- the
-    window has not finished appearing, or the row needs scrolling to -- and both
-    resolve themselves shortly. So this scrolls, retries, and only gives up once
-    the step's own timeout has run out.
+    Clicking is tried first, because it is what the person did and because on a
+    tree it also expands. But Qat refuses to click an item whose rectangle lies
+    outside its view -- "Item is not visible (out-of-bounds)" -- and there are
+    views where that never stops being true: zero-height until a layout settles,
+    a column drawn by a delegate, a row Qat can address but not place.
+
+    Retrying that forever is what a script does when it has one way to do
+    something. This has two. `select` names the property the view uses to say
+    what is chosen (`currentRow` on a list, `currentIndex` on a tab widget) and
+    setting it needs no geometry at all -- no scrolling, no visibility, no
+    layout. It is not a click, so it is second, but it is the reason this step
+    can succeed on a view that will never allow one.
     """
-    candidate = row(container, text, column, recorded)
+    view = find(container)
+    candidate = row(view, text, column, recorded)
     deadline = time.time() + TIMEOUT_MS / 1000.0
-    while True:
+    scrolled = False
+    last = None
+
+    while time.time() < deadline:
         try:
             qat.mouse_click(candidate, **kwargs)
             return candidate
         except RuntimeError as error:
-            if "not visible" not in str(error).lower() or time.time() > deadline:
+            last = error
+            if "not visible" not in str(error).lower():
                 raise
+            if not scrolled:
+                scrolled = True
+                try:
+                    qat.wait_for_object_exists(candidate).ScrollTo()
+                    continue
+                except Exception:
+                    pass
+            break                      # scrolling did not help; stop hammering
+        except LookupError as error:
+            last = error
             time.sleep(0.2)
-            try:
-                qat.wait_for_object_exists(candidate).ScrollTo()
-            except Exception:
-                pass
+
+    if select:
+        # Second way. Needs no geometry, so it works where clicking cannot.
+        wanted = candidate.get("row", recorded)
+        setattr(qat.wait_for_object(view), select, wanted)
+        return candidate
+
+    raise AssertionError(
+        "could not choose row {} of {}: {}. The view gives no property to set "
+        "the selection with either, so there is no second way to do it.".format(
+            candidate.get("row", recorded), view, last))
 '''
 
 MENU_HELPER = '''
@@ -207,10 +275,17 @@ def _render(value: Any) -> str:
     return repr(value)
 
 
-def _constant_names(recording: Recording) -> dict:
-    """One module-level constant per distinct object definition."""
+def _constant_names(recording: Recording, values: Optional[dict] = None) -> dict:
+    """One module-level constant per distinct object definition.
+
+    `values`, if given, is filled with what each constant should hold: the
+    ordered list of definitions that all identified the object when it was
+    recorded, so a step has more than one way to find it.
+    """
     names: dict = {}
     used: set = set()
+    if values is None:
+        values = {}
     for action in recording.actions:
         if action.target is None:
             continue
@@ -226,6 +301,8 @@ def _constant_names(recording: Recording) -> dict:
         key = _render(definition)
         if key in names:
             continue
+        values[key] = (definition if is_item(action.target.definition)
+                       else action.target.candidates)
         base = _identifier(label, "object").upper()
         candidate = base
         suffix = 2
@@ -243,10 +320,11 @@ def _target_expression(action, constants: dict) -> str:
     definition = _render(action.target.definition)
     name = constants[definition]
     if action.target.index is None:
-        return name
+        # `find` chooses among the candidates and waits for one to be usable.
+        return f"find({name})"
     # Qat definitions have no index selector, so a positional target has to be
     # expressed as a lookup. It is fragile by construction and says so above.
-    return f"qat.find_all_objects({name})[{action.target.index}]"
+    return f"qat.find_all_objects(find({name}))[{action.target.index}]"
 
 
 def _item_expression(action, constants: dict) -> str:
@@ -258,6 +336,11 @@ def _item_expression(action, constants: dict) -> str:
     if column:
         parts.append(f"column={column}")
     parts.append(f"recorded={definition.get('row', 0)}")
+    # The property this view uses to say what is selected, if it has one. The
+    # second way to do the step, for views that will not let an item be clicked.
+    select = action.args.get("select")
+    if select:
+        parts.append(f"select={select!r}")
     return f"row({', '.join(parts)})"
 
 
@@ -467,7 +550,8 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     if problems:
         raise ValueError("cannot emit an invalid recording: " + "; ".join(problems))
 
-    constants = _constant_names(recording)
+    values: dict = {}
+    constants = _constant_names(recording, values)
 
     out = [HEADER.format(source=source), ""]
     definitions = [action.target.definition for action in recording.actions
@@ -481,7 +565,9 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
         out.append(ITEM_HELPER)
 
     for definition, name in constants.items():
-        out.append(f"{name} = override({name!r}, {definition})")
+        # Every way this object was findable when it was recorded, best first.
+        out.append(f"{name} = override({name!r}, "
+                   f"{_render(values.get(definition))})")
     if constants:
         out.append("")
 

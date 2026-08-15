@@ -112,25 +112,54 @@ def _clean(value: Any) -> Optional[str]:
 class NameResolver:
     """Produces the most durable definition that uniquely identifies an object."""
 
-    def __init__(self, backend, max_scope_depth: int = 4):
+    def __init__(self, backend, max_scope_depth: int = 4,
+                 max_alternatives: int = 3):
         self.backend = backend
         self.max_scope_depth = max_scope_depth
+        #: How many runners-up to keep. Each costs one lookup while recording
+        #: and buys one more way for the step to survive a change later.
+        self.max_alternatives = max_alternatives
 
     # -- public ------------------------------------------------------------
 
     def resolve(self, node) -> Target:
+        """The best definition for this object -- and the runners-up.
+
+        Every candidate that uniquely identifies the object is kept, not just
+        the first. A step that depends on one selector fails the day that
+        selector changes; a step carrying several tries the next one, and only
+        fails when the application has changed enough that none of them fits.
+
+        They are all validated here, against the live application, so the
+        alternatives are known to work rather than merely plausible.
+        """
         props = self.backend.properties(node)
         label = self._label(props, node)
 
+        best = None
+        alternatives: list = []
         for definition, strategy, robustness, warnings in self._candidates(node, props):
-            if self._identifies(definition, node):
-                return Target(
-                    definition=definition,
-                    strategy=strategy,
-                    robustness=robustness,
-                    warnings=tuple(warnings),
-                    label=label,
-                )
+            if not self._identifies(definition, node):
+                continue
+            if best is None:
+                best = (definition, strategy, robustness, tuple(warnings))
+                continue
+            if definition in alternatives or definition == best[0]:
+                continue
+            alternatives.append(definition)
+            if len(alternatives) >= self.max_alternatives:
+                break
+
+        if best is not None:
+            definition, strategy, robustness, warnings = best
+            return Target(
+                definition=definition,
+                strategy=strategy,
+                robustness=robustness,
+                warnings=warnings,
+                label=label,
+                alternatives=tuple(alternatives),
+            )
 
         # Nothing unique. Fall back to a positional reference against the most
         # specific non-unique definition we have.

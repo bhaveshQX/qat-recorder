@@ -91,7 +91,9 @@ def test_the_step_clicks_the_page_by_name():
     capture.feed(click(1040, kind="mouse_release"))
 
     source = emit_python(capture.finish())
-    assert "click_row(TABSELECTION, 'Connection', recorded=2)" in source
+    # …and the second way to do it, for a view that will not allow a click.
+    assert ("click_row(TABSELECTION, 'Connection', recorded=2, "
+            "select='currentRow')") in source
     compile(source, "generated.py", "exec")
 
 
