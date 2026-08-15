@@ -35,7 +35,9 @@ from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
-from qat_recorder.items import combo_owner, item_definition
+from qat_recorder.items import (
+    combo_owner, discover_row, is_view, item_definition,
+)
 from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
 from qat_recorder.naming import NameResolver, is_editable, is_secret_field
 
@@ -645,16 +647,27 @@ class CaptureSession:
             self._item_press_t = None
             return self._handle_combo(event, combo)
 
-        if not event.target.is_item:
-            return False
-        self._item_press_t = None
-
-        view = self._view_target(event)
+        view = self._view_target(event) if self._looks_like_a_view(event) else None
         if view is None:
             return False              # let the ordinary path attribute it
 
-        definition = item_definition(view.definition, event.target.item_row,
-                                     event.target.item_column)
+        row, column, text = (event.target.item_row, event.target.item_column,
+                             event.target.item_text)
+        if row < 0:
+            # The filter did not say. Ask Qat, which knows -- it wraps every
+            # item in a virtual widget with real geometry, or it could not click
+            # one. Slower, and independent of which filter is installed.
+            found = discover_row(self.backend, view.definition,
+                                 event.x, event.y)
+            if found is None:
+                if not event.target.is_item:
+                    return False      # not a view after all; ordinary handling
+                self._drop(event, NO_ITEM)
+                return True
+            row, column, text = found[0], 0, found[1]
+
+        self._item_press_t = None
+        definition = item_definition(view.definition, row, column)
         matches = self.backend.find_all(definition)
         if len(matches) != 1:
             # Qat cannot address this item, so the honest step is none at all;
@@ -671,8 +684,8 @@ class CaptureSession:
             # code, not of the definition, so the grade stays honest here.
             robustness=Robustness.MODERATE,
             warnings=(ITEM_WARNING,),
-            label=event.target.item_text or f"row {event.target.item_row}",
-            item_text=event.target.item_text,
+            label=text or f"row {row}",
+            item_text=text,
         )
         self._flush_input()
         self._pending = None
@@ -728,6 +741,22 @@ class CaptureSession:
         if (last.kind is ActionKind.CLICK and last.target is not None
                 and last.target.definition == target.definition):
             actions.pop()
+
+    def _looks_like_a_view(self, event: RawEvent) -> bool:
+        """Whether this click may have landed on a row of something.
+
+        Generous on purpose. Asking Qat for row 0 of a widget that has no rows
+        costs one lookup that finds nothing, and the alternative -- being strict
+        and missing an application's own view subclass -- costs a step that
+        clicks the middle of a list.
+        """
+        if event.target.is_item:
+            return True
+        if is_view(event.target.cls):
+            return True
+        # A click through a viewport: the promoted owner is the view.
+        return (is_internal(event.target.object_name)
+                and any(is_view(cls) for cls, _ in event.target.path))
 
     def _view_target(self, event: RawEvent) -> Optional[Target]:
         """A definition for the view holding the item that was clicked."""

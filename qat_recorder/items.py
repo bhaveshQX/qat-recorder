@@ -43,6 +43,19 @@ COMBO_MARKERS = ("ComboBox",)
 #: Qt's internal container for a combo box popup, and the list inside it.
 COMBO_POPUP_CLASSES = ("QComboBoxListView", "QComboBoxPrivateContainer")
 
+#: Anything that draws rows from a model. Matched by suffix so an application's
+#: own subclass -- qBittorrent's TransferListWidget, the Preferences dialog's
+#: tab list -- is covered without naming it.
+VIEW_SUFFIXES = ("View", "ListWidget", "TreeWidget", "TableWidget",
+                 "ItemView", "ListView", "TreeView", "TableView",
+                 "ColumnView", "Selection")
+
+
+def is_view(class_name: str) -> bool:
+    """Whether this widget draws rows rather than owning child widgets."""
+    name = (class_name or "").strip()
+    return bool(name) and name.endswith(VIEW_SUFFIXES)
+
 
 def is_combo(class_name: str) -> bool:
     return (class_name or "").strip().endswith(COMBO_MARKERS)
@@ -75,3 +88,96 @@ def item_definition(container: Mapping[str, Any], row: int,
     if column:
         definition["column"] = int(column)
     return definition
+
+
+# ---------------------------------------------------------------------------
+# Finding the row without the event filter's help
+#
+# Which row was clicked is reported by the native filter, which asks Qt. That
+# works and it is fast, but it makes a semantic decision depend on whether
+# somebody remembered to run `build-filter` -- and when they had not, a click
+# on a tab list became a click on the middle of the tab list, which selected
+# the wrong tab, and the following step failed looking for a widget on a page
+# that was never shown. A step that quietly does the wrong thing is worse than
+# one that fails.
+#
+# So there is a second route to the same answer, through Qat itself: Qat wraps
+# each item in a virtual widget with real geometry -- it has to, or it could not
+# click one -- so the rows can be walked and hit-tested against the point that
+# was clicked. Slower, and entirely independent of which filter is installed.
+#
+# Qat is the source of truth here and the filter is only an accelerator. That is
+# the right way round: what the recorder can name is exactly what Qat can find.
+# ---------------------------------------------------------------------------
+
+#: Property spellings for an item's geometry, most likely first. Which one a
+#: version of Qat uses is not documented, so all of them are tried and the
+#: recorder degrades honestly when none is present.
+BOUNDS_KEYS = (("x", "y", "width", "height"),
+               ("left", "top", "width", "height"))
+
+NESTED_BOUNDS_KEYS = ("bounds", "geometry", "rect")
+
+#: How far down a view to look. Deep enough for a tab list or a settings tree,
+#: shallow enough that a hundred-thousand-row table does not stall a recording.
+MAX_ROWS = 300
+
+
+def bounds_of(properties: Mapping[str, Any]) -> Optional[tuple]:
+    """(x, y, width, height) for an item, whatever Qat calls them."""
+    for nested in NESTED_BOUNDS_KEYS:
+        inner = properties.get(nested)
+        if isinstance(inner, Mapping):
+            found = bounds_of(inner)
+            if found:
+                return found
+
+    for keys in BOUNDS_KEYS:
+        values = []
+        for key in keys:
+            value = properties.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                values = []
+                break
+            values.append(float(value))
+        if len(values) == 4 and values[2] > 0 and values[3] > 0:
+            return tuple(values)
+    return None
+
+
+def contains(bounds: tuple, x: float, y: float) -> bool:
+    left, top, width, height = bounds
+    return left <= x < left + width and top <= y < top + height
+
+
+def discover_row(backend, container: Mapping[str, Any], x: float, y: float,
+                 limit: int = MAX_ROWS) -> Optional[tuple]:
+    """Ask Qat which row of this view holds the point. (row, text) or None.
+
+    Walks upward from row 0 and stops at the first row Qat does not have, which
+    is the end of the view. Returns None when Qat exposes no geometry for its
+    items -- in which case the caller must not guess.
+    """
+    geometry_seen = False
+    for row in range(limit):
+        definition = item_definition(container, row)
+        try:
+            matches = backend.find_all(definition)
+        except Exception:                                    # noqa: BLE001
+            return None
+        if len(matches) != 1:
+            break
+        try:
+            properties = dict(backend.properties(matches[0]))
+        except Exception:                                    # noqa: BLE001
+            continue
+        bounds = bounds_of(properties)
+        if bounds is None:
+            continue
+        geometry_seen = True
+        if contains(bounds, x, y):
+            return row, str(properties.get("text", "") or "")
+
+    if not geometry_seen:
+        return None                 # no geometry at all: nothing to hit-test
+    return None
