@@ -168,6 +168,40 @@ def contains(bounds: tuple, x: float, y: float) -> bool:
 
 SELECTION_PROPERTIES = ("currentRow", "currentIndex")
 
+#: What an item might call the text it shows. A row is only durably clickable if
+#: something here answers -- otherwise all that is left is its position, which
+#: is wrong the moment the list is reordered, and must be graded as such rather
+#: than described as text.
+ITEM_TEXT_KEYS = ("text", "displayText", "itemText", "title", "label",
+                  "accessibleName", "toolTip")
+
+#: Qt::DisplayRole. What every item view uses for the text it draws, reachable
+#: through Qat's method calls even where no property exposes it.
+DISPLAY_ROLE = 0
+
+
+def item_text_of(backend, node) -> str:
+    """The label a person read on this row, however the view stores it."""
+    try:
+        properties = backend.properties(node, keys=ITEM_TEXT_KEYS)
+    except TypeError:            # a backend that predates the keys argument
+        properties = backend.properties(node)
+    except Exception:                                        # noqa: BLE001
+        properties = {}
+
+    for key in ITEM_TEXT_KEYS:
+        value = properties.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    # No property has it. Ask the model, which is where the text really lives.
+    call = getattr(backend, "call", None)
+    if callable(call):
+        value = call(node, "data", DISPLAY_ROLE)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
 
 def selection_property(properties: Mapping[str, Any]) -> str:
     """Which property this view uses to say what is selected, if any."""

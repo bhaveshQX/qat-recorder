@@ -130,6 +130,25 @@ class QatBackend:
                 props[key] = value
         return props
 
+    def call(self, node, method: str, *args):
+        """Invoke a Qt method on an object, or None if it cannot be called.
+
+        Qat exposes every meta-method of an object, which is the only way to
+        reach things Qt does not publish as properties. An item's label is the
+        case that matters here: `data(0)` is Qt::DisplayRole, and it answers for
+        views whose items expose no `text` property at all.
+        """
+        try:
+            bound = getattr(node, method)
+        except Exception:                                    # noqa: BLE001
+            return None
+        if not callable(bound):
+            return None
+        try:
+            return bound(*args)
+        except Exception:                                    # noqa: BLE001
+            return None
+
     def find_all(self, definition):
         """Objects matching a definition, or an empty list.
 
@@ -236,6 +255,15 @@ class FakeBackend:
 
     def identity(self, node):
         return id(node)
+
+    def call(self, node, method: str, *args):
+        """`data(role)` is looked up in a per-node `data` mapping, mirroring how
+        a real item answers for Qt::DisplayRole."""
+        if method == "data" and args:
+            values = node.props.get("data")
+            if isinstance(values, dict):
+                return values.get(args[0])
+        return None
 
     # -- matching -----------------------------------------------------------
 

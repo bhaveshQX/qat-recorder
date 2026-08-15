@@ -36,7 +36,8 @@ from typing import Any, Iterable, Mapping, Optional
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
 from qat_recorder.items import (
-    combo_owner, discover_row, is_view, item_definition, selection_property,
+    combo_owner, discover_row, is_view, item_definition, item_text_of,
+    selection_property,
 )
 from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
 from qat_recorder.naming import NameResolver, is_editable, is_secret_field
@@ -208,6 +209,10 @@ NO_COMBO = ("chosen from a combo box whose own name could not be resolved, so "
 
 ITEM_WARNING = ("a row of a view: found by its text on replay, falling back to "
                 "the recorded position")
+
+ITEM_POSITIONAL = ("a row of a view that shows no text anywhere Qat can read "
+                   "it, so this step can only be its position: it will click "
+                   "the wrong row if the list is ever reordered")
 
 
 # ---------------------------------------------------------------------------
@@ -694,19 +699,12 @@ class CaptureSession:
             # clicking the view instead would click a different row.
             self._drop(event, NO_ITEM)
             return True
+        if not text:
+            # The filter said which row but not what it says. Ask Qat, which can
+            # reach the model even where no property exposes the label.
+            text = item_text_of(self.backend, matches[0])
 
-        target = Target(
-            definition=definition,
-            strategy="item",
-            # Positional by construction -- Qat addresses items by row. The
-            # generated test looks the row up by its text first, which is what
-            # makes it survive a reordering; that is a property of the emitted
-            # code, not of the definition, so the grade stays honest here.
-            robustness=Robustness.MODERATE,
-            warnings=(ITEM_WARNING,),
-            label=text or f"row {row}",
-            item_text=text,
-        )
+        target = self._item_target(definition, text, row)
         self._flush_input()
         self._pending = None
         self._item_press_t = event.t
@@ -1062,24 +1060,29 @@ class CaptureSession:
         if len(matches) != 1:
             return None
 
-        text = ""
-        try:
-            text = str(self.backend.properties(
-                matches[0], keys=("text",)).get("text", "") or "")
-        except Exception:                                    # noqa: BLE001
-            text = ""
-
         return self.recording.add(Action(
             ActionKind.CLICK,
-            target=Target(
-                definition=definition,
-                strategy="item",
-                robustness=Robustness.MODERATE,
-                warnings=(ITEM_WARNING,),
-                label=text or f"row {index}",
-                item_text=text,
-            ),
+            target=self._item_target(definition, item_text_of(
+                self.backend, matches[0]), index),
             t=self._elapsed(when)))
+
+    def _item_target(self, definition: dict, text: str, row: int) -> Target:
+        """A row, graded by whether it can be found again by anything but luck.
+
+        A row with a label is found by that label on replay and survives the
+        list being reordered. A row without one is its position and nothing
+        else -- which is fragile, and has to say so. Describing it as
+        "found by its text" when there is no text was a warning that lied.
+        """
+        if text:
+            return Target(
+                definition=definition, strategy="item",
+                robustness=Robustness.MODERATE, warnings=(ITEM_WARNING,),
+                label=text, item_text=text)
+        return Target(
+            definition=definition, strategy="item+index",
+            robustness=Robustness.FRAGILE, warnings=(ITEM_POSITIONAL,),
+            label=f"row {row}", item_text="")
 
     def _flush_input(self) -> None:
         """End any run of typing or value changes that is in progress."""

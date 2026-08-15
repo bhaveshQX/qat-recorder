@@ -473,12 +473,16 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     out.append("    yield context")
     out.append("    qat.close_application(context)")
     out.append("")
-    out.extend(_preconditions(items, constants))
+    checks = _preconditions(items, constants)
+    out.extend(checks)
     out.append("")
     out.append(f"def {_identifier(test_name, 'test_recorded')}(application):")
 
     body = []
-    if items:
+    # Only when the function was actually emitted. It is not, when no row has
+    # any text to check -- and calling a function that was never written is a
+    # NameError before a single step runs, which is exactly what shipped.
+    if checks:
         body.append("    preconditions()")
     for action in recording.actions:
         body.extend(_call_for(action, constants))
