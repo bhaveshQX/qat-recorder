@@ -402,6 +402,9 @@ class CaptureSession:
         self._value_target: Optional[Target] = None
         self._value_property: str = ""
         self._value_t: int = 0
+        #: Whether that pending value is a view's selection, which becomes a
+        #: click on a row rather than a property assignment.
+        self._value_is_selection: bool = False
         self._resolved_cache: dict = {}
         self._last_reason: str = ""
         self._last_note: str = ""
@@ -631,8 +634,15 @@ class CaptureSession:
         if event.kind == "mouse_release":
             # The press already produced the step; its release is not a second
             # one. Anything else pairs normally.
-            return self._item_press_t is not None and \
-                event.t - self._item_press_t <= self.click_ms
+            if self._item_press_t is None or \
+                    event.t - self._item_press_t > self.click_ms:
+                return False
+            # If the press left a selection to read, read it now rather than at
+            # the next action. The widget has had the press by now, so its
+            # `currentRow` is the row just clicked -- waiting any longer risks
+            # reading the row of the *next* click instead of this one.
+            self._flush_value()
+            return True
         if event.kind not in ("mouse_press", "mouse_double"):
             return False
 
@@ -673,7 +683,7 @@ class CaptureSession:
             #    click, so it comes last, but it survives anything.
             if self._record_selection(event, node, view):
                 return True
-            self._drop(event, NO_ITEM)
+            self._drop(event, self._why_no_item(node, view))
             return True
 
         self._item_press_t = None
@@ -752,6 +762,37 @@ class CaptureSession:
                 and last.target.definition == target.definition):
             actions.pop()
 
+    def _why_no_item(self, node, view: Target) -> str:
+        """Say what this view actually offered, not merely that it offered too
+        little.
+
+        A dropped step that says "could not address the row" sends someone back
+        to the tool's author with a screenshot. One that says which properties
+        the view and its rows do expose answers the question in the report
+        itself -- Qt is large, applications subclass everything in it, and the
+        next view that defeats all three routes should not cost a round trip to
+        find out why.
+        """
+        details = []
+        try:
+            on_view = sorted(self.backend.properties(node).keys())
+            details.append(f"the view exposes {', '.join(on_view) or 'nothing'}")
+        except Exception:                                    # noqa: BLE001
+            details.append("the view's properties could not be read")
+
+        try:
+            rows = self.backend.find_all(item_definition(view.definition, 0))
+            if not rows:
+                details.append("Qat reports no rows in it at all")
+            else:
+                on_row = sorted(self.backend.properties(rows[0]).keys())
+                details.append(
+                    f"row 0 exposes {', '.join(on_row) or 'nothing'}")
+        except Exception as error:                           # noqa: BLE001
+            details.append(f"its rows could not be listed ({error})")
+
+        return f"{NO_ITEM}. For whoever fixes this: {'; '.join(details)}"
+
     def _record_selection(self, event: RawEvent, node, view: Target) -> bool:
         """Record what the view says is selected, rather than a click.
 
@@ -769,9 +810,16 @@ class CaptureSession:
         prop = selection_property(properties)
         if not prop:
             return False
+        # Each click on a list is its own step. Unlike a wheel, which arrives as
+        # a burst and means one change, five clicks down a sidebar are five
+        # pages -- so anything still pending is finished before this one starts.
+        self._flush_input()
         self._item_press_t = event.t
         self._pending = None
-        self._begin_value_change(event, node, view, prop=prop)
+        if self._begin_value_change(event, node, view, prop=prop):
+            # Once the click has settled, this row number becomes a row, and
+            # that row's text becomes the durable way to click it again.
+            self._value_is_selection = True
         return True
 
     def _looks_like_a_view(self, event: RawEvent) -> bool:
@@ -969,7 +1017,15 @@ class CaptureSession:
         self._value_target = None
         self._value_node = None
 
-        value = self._properties_of(node).get(prop)
+        selection, self._value_is_selection = self._value_is_selection, False
+
+        try:
+            value = self.backend.properties(node, keys=(prop,)).get(prop)
+        except TypeError:            # a backend that predates the keys argument
+            value = self._properties_of(node).get(prop)
+        except Exception:                                    # noqa: BLE001
+            value = None
+
         if value is None:
             # The property vanished with the widget, or was never readable.
             # Nothing durable to say, so say nothing rather than guess.
@@ -979,9 +1035,50 @@ class CaptureSession:
                 "could not be read afterwards")
             return
 
+        if selection:
+            # A row number is a means, not an end. Turn it into a click on the
+            # row itself, identified by its text, which is what the person
+            # actually did and what survives the list being reordered.
+            item = self._item_from_row(target, value, when)
+            if item is not None:
+                return
+
         self.recording.add(Action(
             ActionKind.SELECT, target=target,
             args={"property": prop, "value": value},
+            t=self._elapsed(when)))
+
+    def _item_from_row(self, view: Target, row, when: int):
+        """Turn "row 2 is selected" into a click on the row that says X."""
+        try:
+            index = int(row)
+        except (TypeError, ValueError):
+            return None
+        if index < 0:
+            return None
+
+        definition = item_definition(view.definition, index)
+        matches = self.backend.find_all(definition)
+        if len(matches) != 1:
+            return None
+
+        text = ""
+        try:
+            text = str(self.backend.properties(
+                matches[0], keys=("text",)).get("text", "") or "")
+        except Exception:                                    # noqa: BLE001
+            text = ""
+
+        return self.recording.add(Action(
+            ActionKind.CLICK,
+            target=Target(
+                definition=definition,
+                strategy="item",
+                robustness=Robustness.MODERATE,
+                warnings=(ITEM_WARNING,),
+                label=text or f"row {index}",
+                item_text=text,
+            ),
             t=self._elapsed(when)))
 
     def _flush_input(self) -> None:

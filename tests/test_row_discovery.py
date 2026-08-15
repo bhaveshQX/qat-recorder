@@ -134,46 +134,53 @@ def test_the_generated_step_says_which_tab(tabs):
     compile(source, "generated.py", "exec")
 
 
-def test_a_view_with_no_geometry_still_records_what_it_selected():
-    """The third route, and the one that saves the Preferences tab list.
+def test_a_view_with_no_geometry_still_names_the_row_it_selected():
+    """Route 3, and the one that saves the Preferences sidebar.
 
-    A view says what is selected -- `currentRow` on a list -- and that is both
-    readable and writable, so it survives anything a resized window can do.
+    A view says what is selected -- `currentRow` on a list, an ordinary Qt
+    property. That row number is a means, not an end: it is turned into a click
+    on the row itself, identified by its text, which is what the person did.
     """
     backend, nodes = build_tree()
     view = nodes["root"].add(FakeNode(["QListWidget"] + WIDGET, {
         "objectName": "tabSelection", "currentRow": 0}))
-    for index in range(3):                # rows Qat exposes without geometry
+    for index in range(3):                # rows Qat lists, but with no geometry
         view.add(FakeNode(WIDGET, {"row": index, "text": f"tab {index}"}))
 
     capture = CaptureSession(backend, app_name="sample")
     capture.feed(viewport_click("mouse_press", 1000, 10, 45,
                                 view_class="QListWidget"))
+    view.props["currentRow"] = 2          # the click landed on the third tab
     capture.feed(viewport_click("mouse_release", 1040, 10, 45,
                                 view_class="QListWidget"))
-    view.props["currentRow"] = 2          # the click landed on the third tab
     recording = capture.finish()
 
     step = recording.actions[-1]
-    assert step.kind is ActionKind.SELECT
-    assert step.target.definition == {"objectName": "tabSelection"}
-    assert step.args == {"property": "currentRow", "value": 2}
+    assert step.kind is ActionKind.CLICK
+    assert step.target.definition == {
+        "container": {"objectName": "tabSelection"}, "row": 2}
+    assert step.target.item_text == "tab 2"
 
 
-def test_that_selection_replays_as_a_property_not_a_click():
+def test_a_view_whose_rows_cannot_be_listed_sets_the_property_instead():
+    """Last resort. Not a click, but it puts the application where it was."""
     backend, nodes = build_tree()
-    view = nodes["root"].add(FakeNode(["QListWidget"] + WIDGET, {
-        "objectName": "tabSelection", "currentRow": 0}))
-    view.add(FakeNode(WIDGET, {"row": 0, "text": "tab 0"}))
+    nodes["root"].add(FakeNode(["QListWidget"] + WIDGET, {
+        "objectName": "tabSelection", "currentRow": 0}))   # no rows at all
 
     capture = CaptureSession(backend, app_name="sample")
     capture.feed(viewport_click("mouse_press", 1000, 10, 45,
                                 view_class="QListWidget"))
+    nodes["root"].children_list[-1].props["currentRow"] = 2
     capture.feed(viewport_click("mouse_release", 1040, 10, 45,
                                 view_class="QListWidget"))
-    view.props["currentRow"] = 2
 
-    source = emit_python(capture.finish())
+    recording = capture.finish()
+    step = recording.actions[-1]
+    assert step.kind is ActionKind.SELECT
+    assert step.args == {"property": "currentRow", "value": 2}
+
+    source = emit_python(recording)
     assert "qat.wait_for_object(TABSELECTION).currentRow = 2" in source
     compile(source, "generated.py", "exec")
 
