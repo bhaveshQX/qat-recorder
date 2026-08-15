@@ -247,16 +247,23 @@ def test_a_menu_action_release_is_also_two_clicks(session):
     assert ActionKind.DRAG not in [a.kind for a in recording.actions]
 
 
-def test_release_far_from_its_press_becomes_a_drag(session):
+def test_release_far_from_its_press_is_dropped_not_recorded_as_a_drag(session):
+    """It used to become `mouse_drag(dx=50, dy=80)`.
+
+    A drag of so many pixels replays correctly once — on the window size it was
+    recorded against — and then does something else. Where the drag changed a
+    value, that value is recorded instead (see tests/test_no_geometry.py); on a
+    button and a label there is nothing durable to record.
+    """
     capture, _, _ = session
     capture.feed(event("mouse_press", 0, "QPushButton", "loginButton",
                        button=1, x=10, y=10))
     capture.feed(event("mouse_release", 5000, "QLabel", "statusLabel",
                        button=1, x=60, y=90))
     recording = capture.finish()
-    drag = recording.actions[-1]
-    assert drag.kind is ActionKind.DRAG
-    assert drag.args["dx"] == 50 and drag.args["dy"] == 80
+
+    assert ActionKind.DRAG not in [action.kind for action in recording.actions]
+    assert "no durable meaning" in capture.failures[0]
 
 
 # --- typing ----------------------------------------------------------------

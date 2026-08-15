@@ -179,23 +179,31 @@ def _call_for(action, constants: dict) -> list:
         lines.append(f"    qat.press_key({target}, {action.args.get('key', '')!r})")
     elif action.kind is ActionKind.SHORTCUT:
         lines.append(f"    qat.shortcut({target}, {action.args.get('keys', '')!r})")
-    elif action.kind is ActionKind.WHEEL:
-        # snake_case: Qat's Python API is, even where the Qt property is not.
-        lines.append(f"    qat.mouse_wheel({target}, x_degrees={action.args.get('dx', 0)},"
-                     f" y_degrees={action.args.get('dy', 0)})")
-    elif action.kind is ActionKind.DRAG:
-        lines.append(f"    qat.mouse_drag({target}, dx={action.args.get('dx', 0)},"
-                     f" dy={action.args.get('dy', 0)})")
     elif action.kind is ActionKind.SET_CHECKED:
         lines.append(f"    qat.mouse_click({target})")
     elif action.kind is ActionKind.SELECT:
+        # A value, not the gesture that produced it. `wait_for_object` first
+        # because the constant is a definition -- assigning to the dict itself
+        # would set an attribute on a dictionary and change nothing in the
+        # application.
+        prop = action.args.get("property", "currentText")
         value = action.args.get("value")
-        lines.append(f"    {target}.currentText = {value!r}")
+        lines.append(f"    qat.wait_for_object({target}).{prop} = {_render(value)}")
     elif action.kind is ActionKind.VERIFY_PROPERTY:
         prop = action.args.get("property", "text")
         expected = action.args.get("expected")
         lines.append(f"    assert qat.wait_for_object({target}).{prop} == "
                      f"{_render(expected)}")
+    elif action.kind is ActionKind.WHEEL:
+        # Not produced by the recorder any more -- a scroll of so many degrees
+        # depends on how much content happens to be there. Kept so recordings
+        # made before that decision still generate.
+        lines.append(f"    qat.mouse_wheel({target}, "
+                     f"x_degrees={action.args.get('dx', 0)}, "
+                     f"y_degrees={action.args.get('dy', 0)})")
+    elif action.kind is ActionKind.DRAG:
+        lines.append(f"    qat.mouse_drag({target}, dx={action.args.get('dx', 0)},"
+                     f" dy={action.args.get('dy', 0)})")
     elif action.kind is ActionKind.WAIT_MISSING:
         lines.append(f"    qat.wait_for_object_missing({target})")
     else:

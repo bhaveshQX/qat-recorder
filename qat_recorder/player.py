@@ -101,14 +101,26 @@ class Player:
             qat.press_key(target, action.args.get("key", ""))
         elif action.kind is ActionKind.SHORTCUT:
             qat.shortcut(target, action.args.get("keys", ""))
-        elif action.kind is ActionKind.WHEEL:
+        elif action.kind is ActionKind.SELECT:
+            # The value a wheel, a drag or a selection produced -- set, not
+            # re-performed. `wait_for_object` because assigning to a definition
+            # dictionary would change nothing in the application.
+            prop = action.args.get("property", "currentText")
+            setattr(qat.wait_for_object(target), prop,
+                    self.resolve_value(action.args.get("value")))
+        elif action.kind in (ActionKind.WHEEL, ActionKind.DRAG):
+            # No longer recorded: a scroll of so many degrees or a drag of so
+            # many pixels depends on layout and content, and does not survive
+            # either changing. Still replayable so that recordings made before
+            # that decision keep working.
             # x_degrees, not xDegrees: Qat's Python API is snake_case even where
             # the Qt property it wraps is not.
-            qat.mouse_wheel(target, x_degrees=action.args.get("dx", 0),
-                            y_degrees=action.args.get("dy", 0))
-        elif action.kind is ActionKind.DRAG:
-            qat.mouse_drag(target, dx=action.args.get("dx", 0),
-                           dy=action.args.get("dy", 0))
+            if action.kind is ActionKind.WHEEL:
+                qat.mouse_wheel(target, x_degrees=action.args.get("dx", 0),
+                                y_degrees=action.args.get("dy", 0))
+            else:
+                qat.mouse_drag(target, dx=action.args.get("dx", 0),
+                               dy=action.args.get("dy", 0))
         elif action.kind is ActionKind.WAIT_MISSING:
             qat.wait_for_object_missing(target)
         elif action.kind is ActionKind.VERIFY_PROPERTY:

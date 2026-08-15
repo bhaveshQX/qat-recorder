@@ -171,6 +171,53 @@ NOT_FINDABLE = ("could not be found through Qat while it was on screen -- "
 CHROME = ("a scrollbar or window furniture; scrolling is not a step, and the "
           "widget only exists while the content needs it")
 
+SCROLLING = ("scrolling is navigation, not a step: replaying a scroll of so many "
+             "degrees depends on how much content happens to be there, and the "
+             "step after it finds its target by name anyway")
+
+DRAGGING = ("a drag of so many pixels across this widget has no durable "
+            "meaning; what it produced -- a value, a selection -- is what a "
+            "test should assert, and this widget exposes no value to read")
+
+
+# ---------------------------------------------------------------------------
+# Widgets whose value a wheel or a drag changes
+#
+# Scrolling over a list scrolls it. Scrolling over a spin box changes a number,
+# and dragging a slider moves it -- those are real changes, and the honest way
+# to record one is the same trick that records typing: do not replay the input,
+# read what it produced and set that. A recorded step then says "set this to
+# 40" instead of "turn the wheel three notches here", which is what the person
+# meant and is the only version that survives different content, a different
+# window size, or a different day.
+# ---------------------------------------------------------------------------
+
+VALUE_PROPERTIES = (
+    ("QComboBox", "currentText"),
+    ("ComboBox", "currentText"),
+    ("QFontComboBox", "currentText"),
+    ("QSpinBox", "value"),
+    ("QDoubleSpinBox", "value"),
+    ("SpinBox", "value"),
+    ("QSlider", "value"),
+    ("QDial", "value"),
+    ("QProgressBar", "value"),
+    ("QAbstractSlider", "value"),
+    ("Slider", "value"),
+    ("QDateTimeEdit", "dateTime"),
+    ("QDateEdit", "date"),
+    ("QTimeEdit", "time"),
+)
+
+
+def value_property(class_name: str) -> str:
+    """The property a wheel or drag changes on this widget, if any."""
+    name = (class_name or "").strip()
+    for candidate, prop in VALUE_PROPERTIES:
+        if name == candidate or name.endswith(candidate):
+            return prop
+    return ""
+
 NO_OWNER = ("one of Qt's own internal widgets, with no application widget "
             "above it to attribute the click to")
 NOT_UNIQUE = ("no definition identifies it uniquely, not even by position; "
@@ -317,6 +364,11 @@ class CaptureSession:
         self._typing_node: Any = None
         self._typing_target: Optional[Target] = None
         self._typing_t: int = 0
+        #: A wheel or drag changing a widget's value, read when the run ends.
+        self._value_node: Any = None
+        self._value_target: Optional[Target] = None
+        self._value_property: str = ""
+        self._value_t: int = 0
         self._resolved_cache: dict = {}
         self._last_reason: str = ""
         self._last_note: str = ""
@@ -377,7 +429,7 @@ class CaptureSession:
 
     def finish(self) -> Recording:
         self._flush_group()
-        self._flush_typing()
+        self._flush_input()
         self._pending = None
         return self.recording
 
@@ -428,7 +480,7 @@ class CaptureSession:
         elif event.kind == "key_press":
             self._handle_key(event)
         elif event.kind == "shortcut":
-            self._flush_typing()
+            self._flush_input()
             resolved = self._resolve(event.target)
             if resolved is None:
                 self._drop(event)
@@ -447,16 +499,16 @@ class CaptureSession:
                 target=self._owning_widget_target(event.target, node, target),
                 args={"keys": event.keys}, t=self._elapsed(event.t)))
         elif event.kind == "wheel":
-            self._flush_typing()
             resolved = self._resolve(event.target)
             if resolved is None:
+                self._flush_input()
                 self._drop(event)
                 return
-            _, target = resolved
-            self.recording.add(Action(
-                ActionKind.WHEEL, target=target,
-                args={"dx": event.dx, "dy": event.dy},
-                t=self._elapsed(event.t)))
+            node, target = resolved
+            if not self._begin_value_change(event, node, target):
+                # Scrolling something scrollable. Navigation, not a step.
+                self._flush_input()
+                self._drop(event, SCROLLING)
         # key_release and focus_in carry no action of their own.
 
     def _handle_mouse(self, event: RawEvent) -> None:
@@ -472,7 +524,7 @@ class CaptureSession:
         node, target = resolved
 
         if event.kind == "mouse_double":
-            self._flush_typing()
+            self._flush_input()
             self._pending = None
             self.recording.add(Action(
                 ActionKind.DOUBLE_CLICK, target=target,
@@ -481,7 +533,7 @@ class CaptureSession:
             return
 
         if event.kind == "mouse_press":
-            self._flush_typing()
+            self._flush_input()
             self._pending = _Pending(event, target, node, self._last_note)
             return
 
@@ -518,14 +570,16 @@ class CaptureSession:
                 args=self._button_args(event), t=self._elapsed(event.t)))
             return
 
-        # A release with no matching press: most likely a drag.
+        # A release with no matching press: most likely a drag. Recorded as the
+        # value it produced where the widget has one -- dragging a slider sets a
+        # number, and "set it to 40" replays where "drag 63 pixels right" does
+        # not. Everywhere else there is nothing durable to record.
         if pending is not None:
-            self.recording.add(Action(
-                ActionKind.DRAG, target=pending.target,
-                args={"dx": event.x - pending.event.x,
-                      "dy": event.y - pending.event.y,
-                      **self._button_args(pending.event)},
-                t=self._elapsed(pending.event.t)))
+            if self._begin_value_change(pending.event, pending.node,
+                                        pending.target):
+                self._flush_value()
+                return
+            self._drop(pending.event, DRAGGING)
 
     # -- menus -------------------------------------------------------------
 
@@ -579,7 +633,7 @@ class CaptureSession:
             self._menu_press_t = event.t
             return True
 
-        self._flush_typing()
+        self._flush_input()
         self._pending = None
         self._menu_press_t = event.t
         self._menu_definition = target.definition
@@ -617,7 +671,7 @@ class CaptureSession:
         node, target = resolved
 
         if event.modifiers & COMMAND_MODIFIERS:
-            self._flush_typing()
+            self._flush_input()
             combination = "+".join(modifier_names(event.modifiers)
                                    + [key_name(event.key)])
             # Qt dispatches shortcuts at window scope, not to the focused widget.
@@ -636,7 +690,7 @@ class CaptureSession:
                 # Characters landing on something that is not a text field are
                 # navigation or activation, not typing. Recording them as typing
                 # would read the widget's caption back as user input.
-                self._flush_typing()
+                self._flush_input()
                 self.recording.add(Action(
                     ActionKind.KEY, target=target,
                     args={"key": key_name(event.key)}, t=self._elapsed(event.t)))
@@ -646,17 +700,69 @@ class CaptureSession:
             # read its value back when the run ends.
             if (self._typing_target is not None
                     and self._typing_target.definition != target.definition):
-                self._flush_typing()
+                self._flush_input()
             if self._typing_target is None:
                 self._typing_target = target
                 self._typing_node = node
                 self._typing_t = event.t
             return
 
-        self._flush_typing()
+        self._flush_input()
         self.recording.add(Action(
             ActionKind.KEY, target=target,
             args={"key": key_name(event.key)}, t=self._elapsed(event.t)))
+
+    def _begin_value_change(self, event: RawEvent, node, target: Target) -> bool:
+        """Note that a widget's value is being changed, if it has one.
+
+        Returns False for widgets a wheel or drag merely scrolls.
+
+        Like typing, the value is not read here. A wheel arrives as a burst of
+        events and a drag as a stream; reading after each one would record the
+        journey rather than the destination. The value is read when the run
+        ends, which is when it means something.
+        """
+        prop = value_property(event.target.cls)
+        if not prop:
+            return False
+        if (self._value_target is not None
+                and self._value_target.definition != target.definition):
+            self._flush_value()
+        if self._value_target is None:
+            self._value_target = target
+            self._value_node = node
+            self._value_property = prop
+            self._value_t = event.t
+        return True
+
+    def _flush_value(self) -> None:
+        """Emit the value a wheel or drag left behind."""
+        if self._value_target is None:
+            return
+        target, node = self._value_target, self._value_node
+        prop, when = self._value_property, self._value_t
+        self._value_target = None
+        self._value_node = None
+
+        value = self._properties_of(node).get(prop)
+        if value is None:
+            # The property vanished with the widget, or was never readable.
+            # Nothing durable to say, so say nothing rather than guess.
+            self.unresolved += 1
+            self.failures.append(
+                f"value change on {target.label or 'a widget'}: its {prop} "
+                "could not be read afterwards")
+            return
+
+        self.recording.add(Action(
+            ActionKind.SELECT, target=target,
+            args={"property": prop, "value": value},
+            t=self._elapsed(when)))
+
+    def _flush_input(self) -> None:
+        """End any run of typing or value changes that is in progress."""
+        self._flush_typing()
+        self._flush_value()
 
     def _flush_typing(self) -> None:
         if self._typing_target is None:
