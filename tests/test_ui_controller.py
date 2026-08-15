@@ -292,8 +292,8 @@ def test_save_writes_every_artifact(controller, tmp_path):
 
     written = controller.save(str(tmp_path))
     names = sorted(p.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for p in written)
-    assert names == ["recorded.feature", "recording.json", "steps.py",
-                     "test_recorded.py"]
+    assert names == ["objects.json", "recorded.feature", "recording.json",
+                     "steps.py", "test_recorded.py"]
     payload = json.loads((tmp_path / "recording.json").read_text(encoding="utf-8"))
     assert payload["app"] == "sample"
 

@@ -372,11 +372,17 @@ class RecorderController:
         if problems:
             raise ControllerError("recording is not valid: " + "; ".join(problems))
 
+        from qat_recorder.emit.python import emit_object_map  # noqa: PLC0415
+
         files = {
             "recording.json": recording.dumps(),
             "test_recorded.py": emit_python(recording),
             "recorded.feature": emit_gherkin(recording),
             "steps.py": emit_steps(recording),
+            # Empty of overrides, but it lists what the application gave no
+            # durable name, so fixing one is editing a line rather than
+            # inventing one.
+            "objects.json": emit_object_map(recording),
         }
         if self.session is not None and self.session.failures:
             from qat_recorder.capture import dropped_report  # noqa: PLC0415

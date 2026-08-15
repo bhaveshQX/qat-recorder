@@ -141,7 +141,7 @@ def test_saving_pulls_the_files_back_from_the_vm(remote_panel, tmp_path):
     remote_panel.stop_recording()
 
     written = remote_panel.controller.save(str(tmp_path))
-    assert len(written) == 4
+    assert len(written) == 5      # + objects.json, the object map
     assert (tmp_path / "test_recorded.py").exists()
     assert "qat.mouse_click" in (tmp_path / "test_recorded.py").read_text(
         encoding="utf-8")

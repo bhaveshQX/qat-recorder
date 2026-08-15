@@ -225,8 +225,8 @@ def test_save_writes_the_generated_files_locally(remote, tmp_path):
 
     written = remote.save(str(tmp_path))
     names = sorted(p.replace("\\", "/").rsplit("/", 1)[-1] for p in written)
-    assert names == ["recorded.feature", "recording.json", "steps.py",
-                     "test_recorded.py"]
+    assert names == ["objects.json", "recorded.feature", "recording.json",
+                     "steps.py", "test_recorded.py"]
     generated = (tmp_path / "test_recorded.py").read_text(encoding="utf-8")
     assert "qat.mouse_click" in generated
     compile(generated, "remote.py", "exec")

@@ -227,6 +227,9 @@ def _cmd_record(args) -> int:
     (out / "recorded.feature").write_text(emit_gherkin(recording), encoding="utf-8")
     (out / "steps.py").write_text(emit_steps(recording), encoding="utf-8")
 
+    from qat_recorder.emit.python import emit_object_map
+    (out / "objects.json").write_text(emit_object_map(recording), encoding="utf-8")
+
     print(f"{len(recording.actions)} action(s), {session.unresolved} unresolved")
     print(f"written to {out}")
 

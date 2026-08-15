@@ -334,7 +334,7 @@ def test_artifacts_come_back_generated(harness, client):
     artifacts = client.artifacts(sid)
     assert artifacts["recording"]["app"] == "demo"
     assert set(artifacts["files"]) == {
-        "test_recorded.py", "recorded.feature", "steps.py"}
+        "test_recorded.py", "recorded.feature", "steps.py", "objects.json"}
     compile(artifacts["files"]["test_recorded.py"], "remote.py", "exec")
     assert "qat.mouse_click" in artifacts["files"]["test_recorded.py"]
 

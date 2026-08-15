@@ -269,10 +269,13 @@ class Agent:
             if problems:
                 raise AgentError("recording is not valid: " + "; ".join(problems),
                                  409)
+            from qat_recorder.emit.python import emit_object_map
+
             files = {
                 "test_recorded.py": emit_python(recording),
                 "recorded.feature": emit_gherkin(recording),
                 "steps.py": emit_steps(recording),
+                "objects.json": emit_object_map(recording),
             }
             # Comes back with the artifacts, so a tester driving a VM from
             # their own machine can see what the recording lost without

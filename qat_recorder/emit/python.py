@@ -14,6 +14,7 @@ at runtime. Two things are deliberate:
 
 from __future__ import annotations
 
+import json
 import keyword
 import re
 from typing import Any, Mapping
@@ -27,6 +28,7 @@ Regenerate rather than hand-edit: the recording in {source} is the source of
 truth, and edits here are lost the next time it is re-emitted.
 """
 
+import json
 import os
 
 import pytest
@@ -51,6 +53,38 @@ def secret(name):
 #: menu that contains it, so a menu that is not open fails as though the menu
 #: itself had vanished -- "Unable to find object: {"objectName":"menuOptions"}"
 #: -- which sends you looking for the wrong problem entirely.
+#: Always added. An application that gives a control no objectName leaves only
+#: its visible text to identify it, and visible text changes when the product is
+#: translated or reworded. Nothing can invent an identity the application does
+#: not have -- but everything can be pointed at a better one from a single
+#: place, instead of editing every test that touches the control.
+OVERRIDE_HELPER = '''
+
+def _overrides():
+    """Definitions supplied by hand, from objects.json beside this test.
+
+    An object map. Where the recorder could only find a control by its visible
+    text, put a better definition here -- an objectName someone added to the
+    application, an accessibleName, anything stable -- and every test that uses
+    that control picks it up. Nothing is overridden by default.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(here, "objects.json"), encoding="utf-8") as file:
+            loaded = json.load(file)
+    except (OSError, ValueError):
+        return {}
+    return {name: value for name, value in loaded.items()
+            if not name.startswith("_") and isinstance(value, dict)}
+
+
+OVERRIDES = _overrides()
+
+
+def override(name, definition):
+    return OVERRIDES.get(name, definition)
+'''
+
 #: Added only when the recording touches a row of a list, tree or table. Qat
 #: addresses items by row number, which is wrong the moment a row is inserted
 #: above the one that matters. The text is what the person recognised, so the
@@ -275,6 +309,117 @@ def _call_for(action, constants: dict) -> list:
     return lines
 
 
+#: Qat waits three seconds for an object. That is fine for a button and not for
+#: a dialog that has to read a file, so the wait is derived from the recording
+#: instead: the pauses a person left between actions are evidence of how long
+#: this application makes them wait. Doubled, floored, and capped so a
+#: recording where somebody went for coffee does not produce a test that hangs
+#: for an hour.
+MIN_TIMEOUT_MS = 10_000
+MAX_TIMEOUT_MS = 120_000
+
+
+def derived_timeout(recording: Recording) -> int:
+    times = [action.t for action in recording.actions]
+    gaps = [later - earlier for earlier, later in zip(times, times[1:])]
+    longest = max(gaps) if gaps else 0.0
+    return int(min(MAX_TIMEOUT_MS, max(MIN_TIMEOUT_MS, longest * 2000)))
+
+
+def _timeout_block(recording: Recording) -> list:
+    timeout = derived_timeout(recording)
+    return [
+        "",
+        "# How long to wait for an object. Qat's own default is 3s; this is",
+        "# taken from the longest pause in the recorded session, because that is",
+        "# how long this application actually kept someone waiting.",
+        f"TIMEOUT_MS = int(os.environ.get('QATREC_TIMEOUT_MS') or {timeout})",
+    ]
+
+
+def _preconditions(items: list, constants: dict) -> list:
+    """A check, before anything is touched, of what the recording assumed.
+
+    A test recorded against a torrent called ubuntu.iso needs that row to exist.
+    Without this it half-runs and fails somewhere in the middle, leaving dialogs
+    open and the application in a state nobody chose. Failing first, naming
+    everything that is missing at once, is worth more than failing early on the
+    first of them.
+    """
+    wanted = []
+    seen = set()
+    for action in items:
+        text = action.target.item_text
+        if not text:
+            continue
+        view = constants[_render(action.target.definition["container"])]
+        key = (view, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        wanted.append((view, text, action.target.definition.get("row", 0)))
+
+    if not wanted:
+        return []
+
+    lines = ["", "def preconditions():",
+             '    """What this recording assumes was already on screen."""',
+             "    missing = []"]
+    for view, text, recorded in wanted:
+        lines.append(f"    try:")
+        lines.append(f"        row({view}, {text!r}, recorded={recorded})")
+        lines.append(f"    except (AssertionError, LookupError):")
+        lines.append(f"        missing.append({text!r} + ' in ' + str({view}))")
+    lines.extend([
+        "    if missing:",
+        "        raise AssertionError(",
+        "            'this test was recorded against data that is not here: '",
+        "            + ', '.join(missing) +",
+        "            '. Put the application into that state, or re-record.')",
+        "",
+    ])
+    return lines
+
+
+def emit_object_map(recording: Recording) -> str:
+    """The object map that ships beside a generated test.
+
+    Empty of overrides on purpose: nothing should change behind the operator's
+    back. What it does carry is the list of controls the application gave no
+    durable identity, with the definition the recorder settled for, so fixing
+    one is copying a line up and editing it rather than working out what to
+    write from nothing.
+    """
+    constants = _constant_names(recording)
+    weak = {}
+    for action in recording.actions:
+        target = action.target
+        if target is None or target.robustness not in (
+                Robustness.WEAK, Robustness.FRAGILE):
+            continue
+        definition = target.definition
+        if is_item(definition):
+            definition = definition["container"]
+        name = constants.get(_render(definition))
+        if name and name not in weak:
+            weak[name] = dict(definition)
+
+    document = {
+        "_help": [
+            "Definitions supplied by hand. Anything at the top level of this "
+            "file replaces what the recorder worked out, for every test in "
+            "this folder.",
+            "Copy an entry out of _weak, put it at the top level, and edit it "
+            "-- an objectName someone added to the application, an "
+            "accessibleName, any property that does not change when the "
+            "product is translated.",
+            "Nothing is overridden while this file has no top-level entries.",
+        ],
+        "_weak": weak,
+    }
+    return json.dumps(document, indent=2, sort_keys=False) + "\n"
+
+
 def emit_python(recording: Recording, test_name: str = "test_recorded_session",
                 source: str = "recording.json") -> str:
     problems = recording.validate()
@@ -286,13 +431,16 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     out = [HEADER.format(source=source), ""]
     definitions = [action.target.definition for action in recording.actions
                    if action.target is not None]
+    out.append(OVERRIDE_HELPER)
     if any(is_menu_item(definition) for definition in definitions):
         out.append(MENU_HELPER)
-    if any(is_item(definition) for definition in definitions):
+    items = [action for action in recording.actions
+             if action.target is not None and is_item(action.target.definition)]
+    if items:
         out.append(ITEM_HELPER)
 
     for definition, name in constants.items():
-        out.append(f"{name} = {definition}")
+        out.append(f"{name} = override({name!r}, {definition})")
     if constants:
         out.append("")
 
@@ -301,6 +449,7 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     app_path = recording.meta.get("app_path", "")
     if app_path:
         out.append(f"APP_PATH = {app_path!r}")
+    out.extend(_timeout_block(recording))
     out.append("")
     out.append("")
     out.append("@pytest.fixture()")
@@ -313,14 +462,18 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
         # first -- which is every machine except the one it was recorded on.
         out.append("    if APP_NAME not in qat.list_applications():")
         out.append("        qat.register_application(APP_NAME, APP_PATH)")
+    out.append("    qat.Settings.wait_for_object_timeout = TIMEOUT_MS")
     out.append("    context = qat.start_application(APP_NAME)")
     out.append("    yield context")
     out.append("    qat.close_application(context)")
     out.append("")
+    out.extend(_preconditions(items, constants))
     out.append("")
     out.append(f"def {_identifier(test_name, 'test_recorded')}(application):")
 
     body = []
+    if items:
+        body.append("    preconditions()")
     for action in recording.actions:
         body.extend(_call_for(action, constants))
     if not body:

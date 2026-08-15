@@ -98,8 +98,11 @@ def test_fragile_targets_are_flagged_in_the_output(recording):
 
 
 def test_definitions_become_named_constants(recording):
+    """Each goes through `override` so an object map can replace it without
+    anyone editing the steps that use it."""
     source = emit_python(recording)
-    assert "LOGINBUTTON = {'objectName': 'loginButton'}" in source
+    assert ("LOGINBUTTON = override('LOGINBUTTON', {'objectName': "
+            "'loginButton'})") in source
 
 
 def test_a_menu_step_clicks_the_item_by_name():
@@ -116,8 +119,8 @@ def test_a_menu_step_clicks_the_item_by_name():
                        button=1, x=40, y=30, menu_item="&Preferences"))
 
     source = emit_python(capture.finish())
-    assert "OPTIONS = {'container': {'objectName': 'menubar'}, 'text': 'Options'}" \
-        in source
+    assert ("OPTIONS = override('OPTIONS', {'container': {'objectName': "
+            "'menubar'}, 'text': 'Options'})") in source
     assert "menu_item(OPTIONS)  # opens the menu" in source
     assert "menu_item(PREFERENCES)" in source
     compile(source, "generated.py", "exec")
