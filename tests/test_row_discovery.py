@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Finding the clicked row without the event filter's help.
 
@@ -129,7 +129,7 @@ def test_the_generated_step_says_which_tab(tabs):
     capture.feed(viewport_click("mouse_release", 1040, 10, 45))
 
     source = emit_python(capture.finish())
-    assert "qat.mouse_click(row(TABSELECTION, 'Connection', recorded=2))" in source
+    assert "click_row(TABSELECTION, 'Connection', recorded=2)" in source
     assert "clicks the widget, not the item" not in source
     compile(source, "generated.py", "exec")
 

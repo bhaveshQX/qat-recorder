@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Rows in lists, trees and tables, and the combo boxes built from them.
 
@@ -84,7 +84,7 @@ def test_the_generated_step_finds_the_row_by_its_text(view_session):
 
     source = emit_python(capture.finish())
     assert "def row(container, text" in source
-    assert "qat.mouse_click(row(TREEVIEW, 'beta.txt', recorded=1))" in source
+    assert "click_row(TREEVIEW, 'beta.txt', recorded=1)" in source
     compile(source, "generated.py", "exec")
 
 

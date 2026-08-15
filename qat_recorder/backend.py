@@ -130,6 +130,28 @@ class QatBackend:
                 props[key] = value
         return props
 
+    def all_properties(self, node) -> dict:
+        """Every property this object has, asked for in one round trip.
+
+        Qat can list an object's properties, which is worth far more than
+        guessing their names: a virtual item wrapper publishes whatever the view
+        and its model choose to publish, and no list written here could keep up
+        with every Qt class and every application's subclasses. Ask, do not
+        assume.
+        """
+        try:
+            listed = node.list_properties()
+        except Exception:                                    # noqa: BLE001
+            return {}
+        found = {}
+        for entry in listed or ():
+            try:
+                name, value = entry
+            except (TypeError, ValueError):
+                continue
+            found[str(name)] = value
+        return found
+
     def call(self, node, method: str, *args):
         """Invoke a Qt method on an object, or None if it cannot be called.
 
@@ -255,6 +277,9 @@ class FakeBackend:
 
     def identity(self, node):
         return id(node)
+
+    def all_properties(self, node) -> dict:
+        return dict(node.props)
 
     def call(self, node, method: str, *args):
         """`data(role)` is looked up in a per-node `data` mapping, mirroring how

@@ -30,6 +30,7 @@ truth, and edits here are lost the next time it is re-emitted.
 
 import json
 import os
+import time
 
 import pytest
 import qat
@@ -95,9 +96,17 @@ ITEM_HELPER = '''
 def row(container, text, column=0, recorded=0, limit=500):
     """The row of `container` showing `text`, wherever it has moved to.
 
+    Waits for the view itself to be on screen first. A dialog exists in the
+    object tree the moment it is constructed, before it has been laid out, so a
+    row inside it can be found and still have no rectangle to click -- which
+    fails as "Item is not visible (out-of-bounds)", pointing at the row when the
+    problem is that the dialog had not appeared yet.
+
     Falls back to the row that was recorded when nothing matches -- an item with
-    no text, typically an icon or a checkbox column.
+    no readable text, typically an icon or a checkbox column.
     """
+    qat.wait_for_object(container)          # visible and enabled, not merely there
+
     if text:
         for index in range(limit):
             candidate = {"container": container, "row": index, "column": column}
@@ -115,6 +124,31 @@ def row(container, text, column=0, recorded=0, limit=500):
     candidate = {"container": container, "row": recorded, "column": column}
     qat.wait_for_object_exists(candidate).ScrollTo()
     return candidate
+
+
+def click_row(container, text, column=0, recorded=0, **kwargs):
+    """Click a row, waiting for it to actually be on screen.
+
+    Qat refuses to click an item whose rectangle lies outside its view, and
+    says so rather than waiting. That happens for two ordinary reasons -- the
+    window has not finished appearing, or the row needs scrolling to -- and both
+    resolve themselves shortly. So this scrolls, retries, and only gives up once
+    the step's own timeout has run out.
+    """
+    candidate = row(container, text, column, recorded)
+    deadline = time.time() + TIMEOUT_MS / 1000.0
+    while True:
+        try:
+            qat.mouse_click(candidate, **kwargs)
+            return candidate
+        except RuntimeError as error:
+            if "not visible" not in str(error).lower() or time.time() > deadline:
+                raise
+            time.sleep(0.2)
+            try:
+                qat.wait_for_object_exists(candidate).ScrollTo()
+            except Exception:
+                pass
 '''
 
 MENU_HELPER = '''
@@ -256,7 +290,14 @@ def _call_for(action, constants: dict) -> list:
 
     if action.kind is ActionKind.CLICK:
         button = action.args.get("button")
-        if button == "right":
+        if is_item(action.target.definition):
+            # Through the retrying helper: a row can be findable and not yet
+            # drawable, which Qat reports as a failure rather than waiting.
+            call = target.replace("row(", "click_row(", 1)
+            if button == "right":
+                call = call[:-1] + ", button=qat.Button.RIGHT)"
+            lines.append(f"    {call}{extra}")
+        elif button == "right":
             lines.append(
                 f"    qat.mouse_click({target}, button=qat.Button.RIGHT){extra}")
         elif is_menu_item(action.target.definition):

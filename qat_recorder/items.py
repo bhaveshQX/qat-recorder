@@ -180,21 +180,60 @@ ITEM_TEXT_KEYS = ("text", "displayText", "itemText", "title", "label",
 DISPLAY_ROLE = 0
 
 
+#: Never a label, whatever they contain.
+NOT_LABELS = frozenset({
+    "objectName", "type", "id", "cache_uid", "container", "row", "column",
+    "visible", "enabled", "checkable", "checked", "selected", "echoMode",
+    "x", "y", "width", "height", "z",
+})
+
+
+def label_from(properties: Mapping[str, Any]) -> str:
+    """The most label-like string among an item's properties.
+
+    Named properties first, in order of how likely they are to be what a person
+    read. Then anything else that looks like a label, because an application can
+    put its text wherever it likes and a list written here cannot keep up with
+    every Qt class in the world.
+    """
+    for key in ITEM_TEXT_KEYS:
+        value = properties.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    for key, value in sorted(properties.items()):
+        if key in NOT_LABELS or key.startswith("_"):
+            continue
+        if isinstance(value, str) and value.strip() and len(value) <= 200:
+            return value.strip()
+    return ""
+
+
 def item_text_of(backend, node) -> str:
-    """The label a person read on this row, however the view stores it."""
+    """The label a person read on this row, however the view stores it.
+
+    Asks the object what it has rather than guessing names. A virtual item
+    wrapper publishes whatever the view and its model publish, and every attempt
+    so far to predict that has been wrong on a real application.
+    """
+    listed = getattr(backend, "all_properties", None)
+    if callable(listed):
+        text = label_from(listed(node) or {})
+        if text:
+            return text
+
     try:
         properties = backend.properties(node, keys=ITEM_TEXT_KEYS)
     except TypeError:            # a backend that predates the keys argument
         properties = backend.properties(node)
     except Exception:                                        # noqa: BLE001
         properties = {}
+    text = label_from(properties)
+    if text:
+        return text
 
-    for key in ITEM_TEXT_KEYS:
-        value = properties.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    # No property has it. Ask the model, which is where the text really lives.
+    # Nothing published it. Ask the model, which is where the text really lives.
+    # Qat answers void for views that do not support the call -- hence last.
     call = getattr(backend, "call", None)
     if callable(call):
         value = call(node, "data", DISPLAY_ROLE)

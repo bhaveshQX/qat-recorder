@@ -399,6 +399,9 @@ class CaptureSession:
         #: The same, for a row of a view: the press is the step, its release is
         #: not a second one.
         self._item_press_t: Optional[int] = None
+        #: Views already reported as having unreadable row labels, so a session
+        #: that clicks forty rows of one table says so once.
+        self._unlabelled_views: set = set()
         self._typing_node: Any = None
         self._typing_target: Optional[Target] = None
         self._typing_t: int = 0
@@ -703,6 +706,8 @@ class CaptureSession:
             # The filter said which row but not what it says. Ask Qat, which can
             # reach the model even where no property exposes the label.
             text = item_text_of(self.backend, matches[0])
+        if not text:
+            self._note_unlabelled_row(definition, matches[0])
 
         target = self._item_target(definition, text, row)
         self._flush_input()
@@ -1060,11 +1065,35 @@ class CaptureSession:
         if len(matches) != 1:
             return None
 
+        text = item_text_of(self.backend, matches[0])
+        if not text:
+            self._note_unlabelled_row(definition, matches[0])
         return self.recording.add(Action(
             ActionKind.CLICK,
-            target=self._item_target(definition, item_text_of(
-                self.backend, matches[0]), index),
+            target=self._item_target(definition, text, index),
             t=self._elapsed(when)))
+
+    def _note_unlabelled_row(self, definition: dict, node) -> None:
+        """Say what a row without a label does publish.
+
+        Recorded once per view. A step that is positional because its row shows
+        no text is a real limitation, but "no text" is a conclusion, not
+        evidence -- and the evidence is one round trip away.
+        """
+        container = str(definition.get("container"))
+        if container in self._unlabelled_views:
+            return
+        self._unlabelled_views.add(container)
+
+        listed = getattr(self.backend, "all_properties", None)
+        try:
+            names = sorted((listed(node) if callable(listed) else {}).keys())
+        except Exception:                                    # noqa: BLE001
+            names = []
+        self.failures.append(
+            f"rows of {container} show no text that can be read, so steps on "
+            f"them are positional. The row publishes: "
+            f"{', '.join(names) or 'nothing at all'}")
 
     def _item_target(self, definition: dict, text: str, row: int) -> Target:
         """A row, graded by whether it can be found again by anything but luck.

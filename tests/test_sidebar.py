@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Clicking down a dialog's sidebar.
 
@@ -91,7 +91,7 @@ def test_the_step_clicks_the_page_by_name():
     capture.feed(click(1040, kind="mouse_release"))
 
     source = emit_python(capture.finish())
-    assert "qat.mouse_click(row(TABSELECTION, 'Connection', recorded=2))" in source
+    assert "click_row(TABSELECTION, 'Connection', recorded=2)" in source
     compile(source, "generated.py", "exec")
 
 
