@@ -36,7 +36,7 @@ class Backend(Protocol):
 
     def parent(self, node: Any) -> Optional[Any]: ...
 
-    def properties(self, node: Any) -> Mapping[str, Any]: ...
+    def properties(self, node: Any, keys=None) -> Mapping[str, Any]: ...
 
     def find_all(self, definition: Mapping[str, Any]) -> Sequence[Any]: ...
 
@@ -58,6 +58,18 @@ class QatBackend:
         "accessibleName", "placeholderText", "echoMode", "checkable",
         "enabled", "visible",
     )
+
+    #: Read only when something asks for them by name. Each property is a round
+    #: trip, and an audit reads every object in the application -- putting these
+    #: in INTERESTING would make a 500-object scan half as fast again to answer
+    #: a question it never asks.
+    GEOMETRY = ("x", "y", "width", "height")
+
+    #: What a view says about its own selection. `currentRow` on a list,
+    #: `currentIndex` on a tab widget or a combo box: real Qt properties, both
+    #: readable and writable, which makes them the most durable way to record
+    #: "they chose this one" -- no geometry, no scrolling, no row arithmetic.
+    SELECTION = ("currentRow", "currentIndex", "currentText")
 
     def __init__(self, qat_module=None):
         if qat_module is None:
@@ -95,18 +107,19 @@ class QatBackend:
             return None
         return result
 
-    def properties(self, node):
-        """Best-effort snapshot of the properties used for naming.
+    def properties(self, node, keys=None):
+        """Best-effort snapshot of an object's properties.
 
         Uses the object's cached definition where possible and only falls back to
-        remote reads for the interesting keys, to keep tree walks affordable.
+        remote reads for the keys asked for, to keep tree walks affordable.
+        `keys` names them explicitly; by default the ones naming needs.
         """
         props = {}
         try:
             props.update(dict(node.get_definition()))
         except Exception:                                   # noqa: BLE001
             pass
-        for key in self.INTERESTING:
+        for key in (self.INTERESTING if keys is None else tuple(keys)):
             if key in props:
                 continue
             try:
@@ -216,8 +229,10 @@ class FakeBackend:
     def parent(self, node):
         return node.parent_node
 
-    def properties(self, node):
-        return dict(node.props)
+    def properties(self, node, keys=None):
+        if keys is None:
+            return dict(node.props)
+        return {key: node.props[key] for key in keys if key in node.props}
 
     def identity(self, node):
         return id(node)

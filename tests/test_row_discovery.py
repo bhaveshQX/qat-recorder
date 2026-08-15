@@ -134,6 +134,50 @@ def test_the_generated_step_says_which_tab(tabs):
     compile(source, "generated.py", "exec")
 
 
+def test_a_view_with_no_geometry_still_records_what_it_selected():
+    """The third route, and the one that saves the Preferences tab list.
+
+    A view says what is selected -- `currentRow` on a list -- and that is both
+    readable and writable, so it survives anything a resized window can do.
+    """
+    backend, nodes = build_tree()
+    view = nodes["root"].add(FakeNode(["QListWidget"] + WIDGET, {
+        "objectName": "tabSelection", "currentRow": 0}))
+    for index in range(3):                # rows Qat exposes without geometry
+        view.add(FakeNode(WIDGET, {"row": index, "text": f"tab {index}"}))
+
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed(viewport_click("mouse_press", 1000, 10, 45,
+                                view_class="QListWidget"))
+    capture.feed(viewport_click("mouse_release", 1040, 10, 45,
+                                view_class="QListWidget"))
+    view.props["currentRow"] = 2          # the click landed on the third tab
+    recording = capture.finish()
+
+    step = recording.actions[-1]
+    assert step.kind is ActionKind.SELECT
+    assert step.target.definition == {"objectName": "tabSelection"}
+    assert step.args == {"property": "currentRow", "value": 2}
+
+
+def test_that_selection_replays_as_a_property_not_a_click():
+    backend, nodes = build_tree()
+    view = nodes["root"].add(FakeNode(["QListWidget"] + WIDGET, {
+        "objectName": "tabSelection", "currentRow": 0}))
+    view.add(FakeNode(WIDGET, {"row": 0, "text": "tab 0"}))
+
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed(viewport_click("mouse_press", 1000, 10, 45,
+                                view_class="QListWidget"))
+    capture.feed(viewport_click("mouse_release", 1040, 10, 45,
+                                view_class="QListWidget"))
+    view.props["currentRow"] = 2
+
+    source = emit_python(capture.finish())
+    assert "qat.wait_for_object(TABSELECTION).currentRow = 2" in source
+    compile(source, "generated.py", "exec")
+
+
 def test_a_click_on_something_that_is_not_a_view_is_untouched(tabs):
     backend, _ = tabs
     capture = CaptureSession(backend, app_name="sample")

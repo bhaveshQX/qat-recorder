@@ -36,7 +36,7 @@ from typing import Any, Iterable, Mapping, Optional
 from qat_recorder.events import Locator, RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
 from qat_recorder.items import (
-    combo_owner, discover_row, is_view, item_definition,
+    combo_owner, discover_row, is_view, item_definition, selection_property,
 )
 from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
 from qat_recorder.naming import NameResolver, is_editable, is_secret_field
@@ -647,24 +647,34 @@ class CaptureSession:
             self._item_press_t = None
             return self._handle_combo(event, combo)
 
-        view = self._view_target(event) if self._looks_like_a_view(event) else None
-        if view is None:
-            return False              # let the ordinary path attribute it
+        found_view = (self._view_target(event)
+                      if self._looks_like_a_view(event) else None)
+        if found_view is None:
+            return False              # not a view; ordinary handling
+        node, view = found_view
 
+        # Three routes to what was clicked, best first. A click on a view is
+        # never recorded as a click on the view: that selects whichever row
+        # happens to be in the middle, which is how a click on a tab list opened
+        # the wrong tab and made the next step fail on a widget that was never
+        # shown. If none of the three works, the step is dropped and said so.
         row, column, text = (event.target.item_row, event.target.item_column,
                              event.target.item_text)
         if row < 0:
-            # The filter did not say. Ask Qat, which knows -- it wraps every
-            # item in a virtual widget with real geometry, or it could not click
-            # one. Slower, and independent of which filter is installed.
+            # 2. Ask Qat, which wraps every item in a virtual widget with real
+            #    geometry -- it has to, or it could not click one.
             found = discover_row(self.backend, view.definition,
                                  event.x, event.y)
-            if found is None:
-                if not event.target.is_item:
-                    return False      # not a view after all; ordinary handling
-                self._drop(event, NO_ITEM)
+            if found is not None:
+                row, column, text = found[0], 0, found[1]
+
+        if row < 0:
+            # 3. Ask the view what ended up selected, and record that. Not a
+            #    click, so it comes last, but it survives anything.
+            if self._record_selection(event, node, view):
                 return True
-            row, column, text = found[0], 0, found[1]
+            self._drop(event, NO_ITEM)
+            return True
 
         self._item_press_t = None
         definition = item_definition(view.definition, row, column)
@@ -742,6 +752,28 @@ class CaptureSession:
                 and last.target.definition == target.definition):
             actions.pop()
 
+    def _record_selection(self, event: RawEvent, node, view: Target) -> bool:
+        """Record what the view says is selected, rather than a click.
+
+        Read when the run ends, like typing and like a combo box: a click
+        selects, and the selection is only settled once it has happened.
+        """
+        try:
+            properties = self.backend.properties(
+                node, keys=("currentRow", "currentIndex"))
+        except TypeError:            # a backend that predates the keys argument
+            properties = self.backend.properties(node)
+        except Exception:                                    # noqa: BLE001
+            return False
+
+        prop = selection_property(properties)
+        if not prop:
+            return False
+        self._item_press_t = event.t
+        self._pending = None
+        self._begin_value_change(event, node, view, prop=prop)
+        return True
+
     def _looks_like_a_view(self, event: RawEvent) -> bool:
         """Whether this click may have landed on a row of something.
 
@@ -758,19 +790,18 @@ class CaptureSession:
         return (is_internal(event.target.object_name)
                 and any(is_view(cls) for cls, _ in event.target.path))
 
-    def _view_target(self, event: RawEvent) -> Optional[Target]:
-        """A definition for the view holding the item that was clicked."""
+    def _view_target(self, event: RawEvent):
+        """(node, Target) for the view holding the item that was clicked."""
         if event.target.item_view:
             matches = self.backend.find_all(
                 {"objectName": event.target.item_view})
             if len(matches) == 1:
                 candidate = self.resolver.resolve(matches[0])
                 if candidate.robustness is not Robustness.UNRESOLVED:
-                    return candidate
+                    return matches[0], candidate
         # No name of its own: fall back to whatever the ordinary resolution of
         # this event produces, which promotes a viewport to its view already.
-        resolved = self._resolve(event.target)
-        return resolved[1] if resolved else None
+        return self._resolve(event.target)
 
     # -- menus -------------------------------------------------------------
 

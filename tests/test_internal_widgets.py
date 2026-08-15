@@ -85,27 +85,39 @@ def tree_session():
     return CaptureSession(backend, app_name="sample"), nodes
 
 
-def test_a_click_through_a_viewport_belongs_to_the_view(tree_session):
-    capture, _ = tree_session
+def test_a_click_through_a_viewport_belongs_to_the_widget_that_owns_it(tree_session):
+    """A scroll area is not a view: it has no rows, so the click is simply its
+    owner's."""
+    capture, nodes = tree_session
+    nodes["root"].add(FakeNode(["QScrollArea"] + WIDGET,
+                               {"objectName": "detailsArea"}))
     capture.feed_all(click_pair(
         1000, "QWidget", "qt_scrollarea_viewport",
-        path=[("QTreeView", "treeView"), ("QWidget", "rootWidget")]))
+        path=[("QScrollArea", "detailsArea"), ("QWidget", "rootWidget")]))
     recording = capture.finish()
 
     click = recording.actions[-1]
     assert click.kind is ActionKind.CLICK
-    assert click.target.definition == {"objectName": "treeView"}
+    assert click.target.definition == {"objectName": "detailsArea"}
+    assert "not the item under the pointer" in click.note
 
 
-def test_such_a_click_admits_what_it_does_not_know(tree_session):
-    """It clicks the view, not the row that was under the pointer."""
+def test_a_click_in_a_view_is_never_recorded_as_a_click_on_the_view(tree_session):
+    """The rule that came out of a real failure.
+
+    Clicking the middle of the Preferences tab list selected whichever tab was
+    in the middle, so the Connection page never opened and the next step failed
+    on a widget that was never shown -- a step with a perfectly good objectName.
+    A view whose rows cannot be addressed produces no step at all.
+    """
     capture, _ = tree_session
     capture.feed_all(click_pair(
         1000, "QWidget", "qt_scrollarea_viewport",
         path=[("QTreeView", "treeView"), ("QWidget", "rootWidget")]))
     recording = capture.finish()
 
-    assert "not the item under the pointer" in recording.actions[-1].note
+    assert [a.kind for a in recording.actions] == [ActionKind.LAUNCH]
+    assert "would click whichever row" in capture.failures[0]
 
 
 def test_a_click_on_a_scrollbar_is_not_a_step(tree_session):

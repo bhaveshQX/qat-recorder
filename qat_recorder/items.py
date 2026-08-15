@@ -150,6 +150,39 @@ def contains(bounds: tuple, x: float, y: float) -> bool:
     return left <= x < left + width and top <= y < top + height
 
 
+# ---------------------------------------------------------------------------
+# The third route, and usually the best one
+#
+# A view will say what is selected: `currentRow` on a list, `currentIndex` on a
+# tab widget or a combo box. Real Qt properties, readable and writable, which
+# makes them the most durable record of "they chose this one" -- no geometry, no
+# scrolling, no row arithmetic, nothing that a resized window can disturb.
+#
+#     qat.wait_for_object(TABSELECTION).currentRow = 2
+#
+# It is not a click, and for a tree where clicking expands a node it would be
+# the wrong thing, which is why it comes after addressing the item properly.
+# But when the row cannot be determined at all, this is the difference between
+# a recording that works and a step that has to be dropped.
+# ---------------------------------------------------------------------------
+
+SELECTION_PROPERTIES = ("currentRow", "currentIndex")
+
+
+def selection_property(properties: Mapping[str, Any]) -> str:
+    """Which property this view uses to say what is selected, if any."""
+    for name in SELECTION_PROPERTIES:
+        value = properties.get(name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return name
+        # Qat may hand an integer back as a string.
+        if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+            return name
+    return ""
+
+
 def discover_row(backend, container: Mapping[str, Any], x: float, y: float,
                  limit: int = MAX_ROWS) -> Optional[tuple]:
     """Ask Qat which row of this view holds the point. (row, text) or None.
@@ -168,6 +201,9 @@ def discover_row(backend, container: Mapping[str, Any], x: float, y: float,
         if len(matches) != 1:
             break
         try:
+            properties = dict(backend.properties(
+                matches[0], keys=("x", "y", "width", "height", "text")))
+        except TypeError:            # a backend that predates the keys argument
             properties = dict(backend.properties(matches[0]))
         except Exception:                                    # noqa: BLE001
             continue
