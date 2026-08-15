@@ -19,4 +19,23 @@ if [ -n "${QATREC_LIB:-}" ]; then
     fi
 fi
 
+# Ask Qt for its own file and colour dialogs rather than the desktop's.
+#
+# A native dialog is not a Qt widget. It belongs to GTK or to the desktop
+# portal, it does not appear in the object tree, and Qat can neither see nor
+# drive it. Worse, it is modal and runs its own event loop, so while it is open
+# the application stops answering Qat at all -- observed as
+#
+#     Error sending command - trying to reconnect: timed out
+#
+# with the recording dead in the water from the moment the file picker opened.
+# Emptying QT_QPA_PLATFORMTHEME makes Qt fall back to QFileDialog, which is a
+# Qt widget tree like any other: visible, nameable, and replayable.
+#
+# It changes how the dialog looks, which is why it is opt-out. Recording and
+# replay must agree, so the generated test sets exactly the same variable.
+if [ "${QATREC_NATIVE_DIALOGS:-0}" != "1" ]; then
+    export QT_QPA_PLATFORMTHEME=""
+fi
+
 exec "${QATREC_APP}" "$@"

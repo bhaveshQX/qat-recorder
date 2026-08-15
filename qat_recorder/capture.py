@@ -165,6 +165,24 @@ def owner_of(locator: Locator) -> Optional[Locator]:
     return None
 
 
+NOT_ANSWERING = (
+    "the application stopped answering Qat. Almost always a native dialog: a "
+    "GTK or desktop-portal file picker is not a Qt widget, it is modal, and it "
+    "runs its own event loop, so nothing can be recorded until it closes. The "
+    "launcher asks Qt for its own dialogs instead (QT_QPA_PLATFORMTHEME); if "
+    "this appears, that application is opening one some other way")
+
+
+def explain(error: Exception) -> str:
+    """Turn an exception raised during folding into something actionable."""
+    text = str(error) or error.__class__.__name__
+    lowered = text.lower()
+    if "timed out" in lowered or "timeout" in lowered or \
+            "not running" in lowered or "disconnected" in lowered:
+        return f"{NOT_ANSWERING} [{text}]"
+    return text
+
+
 #: Why an event could not be turned into a step.
 NOT_FINDABLE = ("could not be found through Qat while it was on screen -- "
                 "usually hidden, on another tab, or already destroyed")
@@ -415,8 +433,9 @@ class CaptureSession:
                 self.feed(event)
             except Exception as error:                       # noqa: BLE001
                 self.unresolved += 1
-                self.failures.append(f"{event.kind} on "
-                                     f"{event.target.cls or '?'}: {error}")
+                self.failures.append(
+                    f"{event.kind} on {describe(event.target)}: "
+                    f"{explain(error)}")
 
     def flush_stale(self, now_ms: Optional[int] = None,
                     max_age_ms: int = 150) -> bool:
@@ -607,8 +626,6 @@ class CaptureSession:
         is recorded as the value chosen, not as two clicks on a popup that only
         exists while it is open.
         """
-        if not event.target.is_item:
-            return False
         if event.kind == "mouse_release":
             # The press already produced the step; its release is not a second
             # one. Anything else pairs normally.
@@ -617,10 +634,20 @@ class CaptureSession:
         if event.kind not in ("mouse_press", "mouse_double"):
             return False
 
-        self._item_press_t = None
+        # Combo boxes first, and deliberately before the `is_item` gate. Which
+        # row of the popup was clicked comes from the event filter, and a filter
+        # built before that existed does not send it -- but a combo popup is
+        # recognisable from the class chain alone, and its value can be read
+        # afterwards. This is the case that has broken replays repeatedly, so it
+        # does not get to depend on which build of the filter is installed.
         combo = combo_owner(event.target)
         if combo:
+            self._item_press_t = None
             return self._handle_combo(event, combo)
+
+        if not event.target.is_item:
+            return False
+        self._item_press_t = None
 
         view = self._view_target(event)
         if view is None:
@@ -677,11 +704,19 @@ class CaptureSession:
         # setting the value does that job as well. Left in, replay would open
         # the popup and leave it open over the following step.
         self._drop_click_on(target)
-        self.recording.add(Action(
-            ActionKind.SELECT, target=target,
-            args={"property": "currentText",
-                  "value": event.target.item_text},
-            t=self._elapsed(event.t)))
+
+        if event.target.item_text:
+            self.recording.add(Action(
+                ActionKind.SELECT, target=target,
+                args={"property": "currentText",
+                      "value": event.target.item_text},
+                t=self._elapsed(event.t)))
+            return True
+
+        # The filter did not say which row was clicked, so read the answer from
+        # the combo box instead -- once the popup has closed and the choice has
+        # taken effect, which is what deferring to the next flush achieves.
+        self._begin_value_change(event, node, target, prop="currentText")
         return True
 
     def _drop_click_on(self, target: Target) -> None:
@@ -839,17 +874,20 @@ class CaptureSession:
             ActionKind.KEY, target=target,
             args={"key": key_name(event.key)}, t=self._elapsed(event.t)))
 
-    def _begin_value_change(self, event: RawEvent, node, target: Target) -> bool:
+    def _begin_value_change(self, event: RawEvent, node, target: Target,
+                            prop: str = "") -> bool:
         """Note that a widget's value is being changed, if it has one.
 
-        Returns False for widgets a wheel or drag merely scrolls.
+        Returns False for widgets a wheel or drag merely scrolls. `prop` names
+        the property outright for callers that already know it -- choosing from
+        a combo box, where the widget under the pointer was the popup.
 
         Like typing, the value is not read here. A wheel arrives as a burst of
         events and a drag as a stream; reading after each one would record the
         journey rather than the destination. The value is read when the run
         ends, which is when it means something.
         """
-        prop = value_property(event.target.cls)
+        prop = prop or value_property(event.target.cls)
         if not prop:
             return False
         if (self._value_target is not None

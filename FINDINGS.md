@@ -273,6 +273,17 @@ The audit had classified these as internal since Phase 1. Capture simply never
 used what the audit knew, which is its own lesson about knowledge living in one
 half of a system.
 
+**A native file dialog stops the application answering Qat at all** [live]
+
+Opening one froze a recording: `Error sending command - trying to reconnect:
+timed out`, repeatedly, and nothing recorded from that point. A native dialog is
+not a Qt widget — it belongs to GTK or to the desktop portal — so it is absent
+from the object tree, and being modal it runs its own event loop, which leaves
+Qat's in-process server unable to reply. Emptying `QT_QPA_PLATFORMTHEME` makes
+Qt fall back to `QFileDialog`, a Qt widget tree like any other: visible,
+nameable and replayable. The launcher sets it, the generated test sets it, and
+`QATREC_NATIVE_DIALOGS=1` turns it off.
+
 **A menu item is not an object that can receive a click** [live] [source]
 
 In a widgets application a menu item is a `QAction`: no geometry, no events. The
