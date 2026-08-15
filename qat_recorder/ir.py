@@ -52,6 +52,10 @@ class ActionKind(str, Enum):
 
     LAUNCH = "launch"
     CLOSE = "close"
+    #: One window dismissed, not the application. Recorded when a window is
+    #: closed from its title bar, which no click can express because the
+    #: decoration belongs to the window manager rather than to Qt.
+    CLOSE_WINDOW = "close_window"
     CLICK = "click"
     DOUBLE_CLICK = "double_click"
     CONTEXT_CLICK = "context_click"

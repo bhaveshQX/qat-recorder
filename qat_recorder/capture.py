@@ -402,6 +402,10 @@ class CaptureSession:
         #: Views already reported as having unreadable row labels, so a session
         #: that clicks forty rows of one table says so once.
         self._unlabelled_views: set = set()
+        #: What the event filter said it can report, from its `hello`. Empty
+        #: until it says, and empty for a build too old to say anything -- which
+        #: is itself the answer, and is why the check below is worth making.
+        self.filter_features: set = set()
         self._typing_node: Any = None
         self._typing_target: Optional[Target] = None
         self._typing_t: int = 0
@@ -520,7 +524,12 @@ class CaptureSession:
     # -- handling ----------------------------------------------------------
 
     def _handle(self, event: RawEvent) -> None:
-        if event.kind in ("mouse_press", "mouse_release", "mouse_double"):
+        if event.kind == "hello":
+            self.filter_features = set(event.features)
+            return
+        if event.kind == "close_window":
+            self._handle_close(event)
+        elif event.kind in ("mouse_press", "mouse_release", "mouse_double"):
             self._handle_mouse(event)
         elif event.kind == "key_press":
             self._handle_key(event)
@@ -627,6 +636,30 @@ class CaptureSession:
                 self._flush_value()
                 return
             self._drop(pending.event, DRAGGING)
+
+    def _handle_close(self, event: RawEvent) -> None:
+        """A window dismissed from its title bar.
+
+        The X belongs to the window manager, so no click ever reaches the
+        application and there is nothing to record as one. Qt does get a close
+        event, though, and `QWidget::close()` is a slot -- so the step replays
+        by asking the window to close itself, which is both what happened and
+        the only way to say it.
+
+        This matters out of proportion to how it looks. A dialog nobody closed
+        stays open and modal over every step that follows, and each of those
+        then fails for reasons of its own.
+        """
+        self._flush_input()
+        self._pending = None
+        resolved = self._resolve(event.target)
+        if resolved is None:
+            self._drop(event)
+            return
+        _, target = resolved
+        self.recording.add(Action(
+            ActionKind.CLOSE_WINDOW, target=target, t=self._elapsed(event.t),
+            note="closed from the title bar"))
 
     # -- items in views ----------------------------------------------------
 
@@ -793,6 +826,15 @@ class CaptureSession:
         next view that defeats all three routes should not cost a round trip to
         find out why.
         """
+        if "itemRow" not in self.filter_features:
+            # The likeliest cause by far, and one nothing here can work around:
+            # the column of a cell -- which is what a checkbox in a table is --
+            # comes from the event filter and from nowhere else.
+            return (f"{NO_ITEM}. The event filter on this machine does not "
+                    "report which row and column were clicked, so rows of "
+                    "trees and tables cannot be addressed at all. Rebuild it: "
+                    "python -m qat_recorder build-filter")
+
         details = []
         try:
             on_view = sorted(self.backend.properties(node).keys())

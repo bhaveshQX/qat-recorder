@@ -120,6 +120,13 @@ class RawEvent:
     dy: int = 0
     #: Set for `shortcut` records, already formatted by Qt (e.g. "Ctrl+S").
     keys: str = ""
+    #: Set for the `hello` record the filter sends when it starts: what this
+    #: build of it can report. A filter is compiled on the machine it runs on
+    #: and stays there until somebody rebuilds it, so the Python half cannot
+    #: assume it is current -- and telling "this view has no rows" apart from
+    #: "the filter here cannot say" is the difference between a useful failure
+    #: and a misleading one.
+    features: tuple = ()
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RawEvent":
@@ -135,6 +142,7 @@ class RawEvent:
             dx=int(data.get("dx", 0)),
             dy=int(data.get("dy", 0)),
             keys=str(data.get("keys", "")),
+            features=tuple(str(name) for name in data.get("features", ())),
         )
 
 

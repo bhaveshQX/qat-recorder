@@ -120,6 +120,10 @@ def test_a_view_that_offers_nothing_says_what_it_does_offer():
     opaque.add(FakeNode(WIDGET, {"row": 0, "colour": "red"}))
 
     capture = CaptureSession(backend, app_name="sample")
+    # A current filter, so the diagnosis is about the view rather than about
+    # the filter being too old to report rows at all.
+    capture.feed(RawEvent(kind="hello", t=0, target=Locator(),
+                          features=("menuItem", "itemRow")))
     capture.feed(RawEvent(
         kind="mouse_press", t=1000, button=1, x=5, y=5,
         target=Locator(cls="QWidget", object_name="qt_scrollarea_viewport",

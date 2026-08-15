@@ -121,6 +121,10 @@ class Player:
             else:
                 qat.mouse_drag(target, dx=action.args.get("dx", 0),
                                dy=action.args.get("dy", 0))
+        elif action.kind is ActionKind.CLOSE_WINDOW:
+            # What the window manager's X asks the application to do. `close`
+            # is a slot on every QWidget.
+            qat.wait_for_object(target).close()
         elif action.kind is ActionKind.WAIT_MISSING:
             qat.wait_for_object_missing(target)
         elif action.kind is ActionKind.VERIFY_PROPERTY:

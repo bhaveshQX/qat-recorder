@@ -230,6 +230,16 @@ def _cmd_record(args) -> int:
     from qat_recorder.emit.python import emit_object_map
     (out / "objects.json").write_text(emit_object_map(recording), encoding="utf-8")
 
+    if session.filter_features and "itemRow" not in session.filter_features:
+        print("\n  the event filter here is older than this recorder: it does "
+              "not report\n  which row was clicked, so rows of lists, trees and "
+              "tables will be lost.\n  Rebuild it with: python -m qat_recorder "
+              "build-filter\n", file=sys.stderr)
+    elif not session.filter_features:
+        print("\n  the event filter here did not say what it supports, which "
+              "means it\n  predates this recorder. Rebuild it with: python -m "
+              "qat_recorder build-filter\n", file=sys.stderr)
+
     print(f"{len(recording.actions)} action(s), {session.unresolved} unresolved")
     print(f"written to {out}")
 

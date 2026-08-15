@@ -347,6 +347,13 @@ const char *kindFor(QEvent::Type type)
     case QEvent::KeyRelease:         return "key_release";
     case QEvent::Wheel:              return "wheel";
     case QEvent::FocusIn:            return "focus_in";
+    // Closing a window from its title bar is not a click on anything Qt owns:
+    // the decoration belongs to the window manager, and no mouse event ever
+    // reaches the application. What does reach it is a close event, and it is
+    // spontaneous, because the window system asked for it. Without this, a
+    // dialog dismissed with the X is simply missing from the recording -- and
+    // on replay it stays open, modal, over every step that follows.
+    case QEvent::Close:              return "close_window";
     default:                         return nullptr;
     }
 }
@@ -571,6 +578,22 @@ void qatrecStartup()
 
     g_running.store(true);
     std::thread(writerLoop, port).detach();
+
+    // Say what this build can do, before anything else.
+    //
+    // A filter is compiled on the machine it runs on and lives there until
+    // somebody rebuilds it. When the Python half gained support for rows of
+    // lists and tables, an older filter went on sending events without them --
+    // and the recorder could not tell the difference between "this view has no
+    // rows" and "the filter here is too old to say". It reported the wrong
+    // thing for three rounds of debugging. Now it can ask.
+    {
+        std::string hello;
+        hello += "{\"kind\":\"hello\",\"protocol\":2,\"features\":[";
+        hello += "\"menuItem\",\"itemRow\",\"closeWindow\"";
+        hello += "]}\n";
+        enqueue(std::move(hello));
+    }
 
     // Installed on the application object, so it sees events delivered to every
     // object in this thread.

@@ -423,6 +423,10 @@ def _call_for(action, constants: dict) -> list:
     elif action.kind is ActionKind.DRAG:
         lines.append(f"    qat.mouse_drag({target}, dx={action.args.get('dx', 0)},"
                      f" dy={action.args.get('dy', 0)})")
+    elif action.kind is ActionKind.CLOSE_WINDOW:
+        # `close()` is a slot on every QWidget, and it is what the window
+        # manager's X asks the application to do.
+        lines.append(f"    qat.wait_for_object({target}).close()")
     elif action.kind is ActionKind.WAIT_MISSING:
         lines.append(f"    qat.wait_for_object_missing({target})")
     else:
