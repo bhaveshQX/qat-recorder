@@ -486,13 +486,30 @@ class RecorderPanel(QMainWindow):
             self, "Keep this test", "Name it — what does this test do?")
         if not accepted or not name.strip():
             return
+
+        # Saving runs it once. That takes a few seconds and is worth every one:
+        # a test nobody has run is a guess, and this is the last moment the
+        # operator still remembers what they clicked.
+        self.statusBar().showMessage("Keeping, and running it once to check…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             case = self.controller.save_as(name.strip())
         except Exception as error:                            # noqa: BLE001
             self._warn(f"Could not keep this test.\n\n{error}")
             return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        verdict = case.get("verified")
         self.statusBar().showMessage(
-            f"Kept as {case.get('name')} in {case.get('directory')}")
+            f"Kept as {case.get('name')} — replayed {verdict}" if verdict
+            else f"Kept as {case.get('name')} in {case.get('directory')}")
+        if verdict == "failed":
+            self._warn(
+                f"{case.get('name')} was saved, but replaying it did not "
+                "work.\n\nThat is worth knowing now rather than later: open it "
+                "in Saved tests to see which step failed, then re-record or "
+                "adjust and keep it again.")
         self.refresh_tests()
         self.left.setCurrentIndex(1)
 
@@ -510,8 +527,12 @@ class RecorderPanel(QMainWindow):
             row = self.tests.rowCount()
             self.tests.insertRow(row)
             result = self._results.get(case["id"])
-            verdict = "" if result is None else (
-                "passed" if result.get("ok") else "FAILED")
+            if result is not None:
+                verdict = "passed" if result.get("ok") else "FAILED"
+            else:
+                # What it did when it was saved, if it has not been run since.
+                verdict = {"passed": "passed", "failed": "FAILED"}.get(
+                    case.get("verified", ""), "")
             for column, text in enumerate((
                     case.get("name", ""),
                     str(case.get("steps", "")),
@@ -520,7 +541,8 @@ class RecorderPanel(QMainWindow):
                 item = QTableWidgetItem(text)
                 if column == 3 and verdict:
                     item.setForeground(QColor(
-                        robustness_colour(Robustness.STRONG) if result.get("ok")
+                        robustness_colour(Robustness.STRONG)
+                        if verdict == "passed"
                         else robustness_colour(Robustness.UNRESOLVED)))
                 self.tests.setItem(row, column, item)
         self.statusBar().showMessage(f"{len(self._cases)} saved test(s)")

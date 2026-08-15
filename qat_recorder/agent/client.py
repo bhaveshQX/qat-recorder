@@ -126,9 +126,19 @@ class AgentClient:
     def artifacts(self, session_id: str) -> dict:
         return self._request("GET", route("artifacts", session_id=session_id))
 
-    def keep(self, session_id: str, name: str) -> dict:
-        return self._request("POST", route("keep", session_id=session_id),
-                             {"name": name})["test"]
+    def keep(self, session_id: str, name: str, verify: bool = True) -> dict:
+        """Keep the session as a named test on the host, which runs it once.
+
+        The run happens on the host, so this call holds for as long as the test
+        takes -- which is the point: the answer comes back with the name.
+        """
+        previous = self.timeout
+        self.timeout = max(self.timeout, DEFAULT_TIMEOUT + 30.0)
+        try:
+            return self._request("POST", route("keep", session_id=session_id),
+                                 {"name": name, "verify": verify})["test"]
+        finally:
+            self.timeout = previous
 
     def tests(self, app: str = "") -> dict:
         path = route("tests") + (f"?app={quote(app)}" if app else "")

@@ -304,12 +304,17 @@ class Agent:
 
     # -- the library -------------------------------------------------------
 
-    def keep(self, session_id: str, name: str) -> dict:
-        """Promote a finished session into the host's suite, under a name."""
+    def keep(self, session_id: str, name: str, verify: bool = True) -> dict:
+        """Promote a finished session into the host's suite, and prove it runs.
+
+        The proving happens here, on the host, because that is where the
+        application is -- and it is why the tester's machine gets a verdict back
+        with the name rather than a promise.
+        """
         session = self._require(session_id)
         with session.lock:
             try:
-                return {"test": session.controller.save_as(name)}
+                return {"test": session.controller.save_as(name, verify=verify)}
             except Exception as error:                        # noqa: BLE001
                 raise AgentError(str(error), 409)
 
@@ -484,7 +489,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if tail == "keep" and method == "POST":
                     body = self._body()
                     return self._send(201, agent.keep(
-                        session_id, body.get("name", "")))
+                        session_id, body.get("name", ""),
+                        bool(body.get("verify", True))))
             if len(parts) == 3 and parts[:2] == ["v1", "sessions"] \
                     and method == "DELETE":
                 return self._send(200, agent.release(parts[2]))

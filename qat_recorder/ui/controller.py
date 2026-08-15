@@ -389,17 +389,37 @@ class RecorderController:
             files["unresolved.txt"] = dropped_report(self.session.failures)
         return files
 
-    def save_as(self, name: str) -> dict:
-        """Keep this recording in the library, under a name, as its own test."""
+    def save_as(self, name: str, verify: bool = True) -> dict:
+        """Keep this recording in the library, and prove it replays.
+
+        The proving is the point. Every failure this project has had followed
+        one shape: the recorder emits steps it has never executed, and the
+        operator finds out later -- sometimes days later, always after they have
+        forgotten what they clicked. No amount of care about locators fixes
+        that, because the recorder is predicting the future and only a replay
+        settles it.
+
+        The application has just been closed by `stop()`, the machine is right
+        here, and the person who can still do something about a failure is
+        standing in front of it. So the test is run once, immediately, and the
+        verdict is stored with it. A test in this library has either been proved
+        to replay or is marked as not having replayed; there is no third state
+        where nobody knows.
+        """
         from qat_recorder.library import TestLibrary        # noqa: PLC0415
 
-        case = TestLibrary().save(
+        library = TestLibrary()
+        case = library.save(
             app=self.app_name or Path(self.app_path).name or "app",
             name=name,
             files=self.generated_files(),
             app_path=self.app_path,
             summary=self.summary())
         self.saved_to = str(case.directory)
+
+        if verify:
+            from qat_recorder.replay import run_pytest       # noqa: PLC0415
+            library.record_verdict(case, run_pytest(case.directory))
         return case.to_dict()
 
     def list_tests(self, app: str = "") -> list:

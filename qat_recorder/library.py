@@ -83,6 +83,12 @@ class TestCase:
     unresolved: int = 0
     needs_review: int = 0
     app_path: str = ""
+    #: What happened when this test was last run: "passed", "failed", or empty
+    #: for never. Written the moment it is saved, because a test nobody has run
+    #: is a guess, and the person who can still do something about it is the one
+    #: who just recorded it.
+    verified: str = ""
+    verified_at: str = ""
 
     @property
     def id(self) -> str:
@@ -105,6 +111,8 @@ class TestCase:
             "needs_review": self.needs_review,
             "app_path": self.app_path,
             "runnable": self.runnable,
+            "verified": self.verified,
+            "verified_at": self.verified_at,
         }
 
     @classmethod
@@ -118,6 +126,8 @@ class TestCase:
             unresolved=int(data.get("unresolved", 0) or 0),
             needs_review=int(data.get("needs_review", 0) or 0),
             app_path=str(data.get("app_path", "")),
+            verified=str(data.get("verified", "")),
+            verified_at=str(data.get("verified_at", "")),
         )
 
 
@@ -176,6 +186,24 @@ class TestLibrary:
         )
         (directory / "meta.json").write_text(
             json.dumps(case.to_dict(), indent=2), encoding="utf-8")
+        return case
+
+    def record_verdict(self, case: TestCase, result: Mapping[str, Any]) -> TestCase:
+        """Store what happened when this test was run.
+
+        Kept in the test's own meta.json rather than a central report, so a
+        directory that is copied to another machine carries its own history, and
+        so nothing has to be reconciled if two people record at once.
+        """
+        case.verified = "passed" if result.get("ok") else "failed"
+        case.verified_at = datetime.now(timezone.utc).isoformat(
+            timespec="seconds")
+        document = case.to_dict()
+        # The failure output goes in the metadata too. Whoever reads this later
+        # wants to know why, not merely that.
+        document["last_output"] = str(result.get("output") or "")[-8000:]
+        (case.directory / "meta.json").write_text(
+            json.dumps(document, indent=2), encoding="utf-8")
         return case
 
     # -- reading -----------------------------------------------------------
