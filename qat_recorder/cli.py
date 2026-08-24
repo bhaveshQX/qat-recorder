@@ -457,6 +457,7 @@ def _cmd_hosts(args) -> int:
             ca_file=args.ca_file or "",
             token_file=args.token_file or "",
             token_env=args.token_env or "",
+            ngrok_url=args.ngrok_url or "",
             insecure_plaintext=args.insecure_plaintext,
             note=args.note or "",
         )
@@ -503,6 +504,50 @@ def _cmd_panel(args) -> int:
     if getattr(args, "agent", ""):
         argv += ["--agent", args.agent]
     return panel_main(argv)
+
+
+def _cmd_web_panel(args) -> int:
+    """Start a local web server that serves the React UI.
+
+    The UI itself lets the user type a VM address or ngrok URL and connect.
+    No qat, no registry, no tokens needed on this machine.
+    """
+    import webbrowser
+
+    try:
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.staticfiles import StaticFiles
+        from fastapi.responses import FileResponse
+        from fastapi.middleware.cors import CORSMiddleware
+    except ImportError as error:
+        print(f"web panel needs fastapi and uvicorn: pip install fastapi uvicorn", file=sys.stderr)
+        return 2
+
+    static_dir = Path(__file__).parent / "web" / "static"
+    if not (static_dir / "index.html").exists():
+        print(f"UI not built — run 'npm run build' inside qat_recorder/web/frontend/", file=sys.stderr)
+        return 2
+
+    app = FastAPI(docs_url=None, redoc_url=None)
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+    @app.get("/")
+    async def index():
+        return FileResponse(str(static_dir / "index.html"))
+
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    port = args.port
+    url = f"http://127.0.0.1:{port}"
+    print(f"QAT Recorder Web Panel -> {url}")
+    webbrowser.open(url)
+
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -598,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
                               help="registered host name, or HOST[:PORT]")
     panel_parser.set_defaults(func=_cmd_panel)
 
+    web_panel_parser = sub.add_parser(
+        "web-panel", help="open the web-based recording control panel")
+    web_panel_parser.add_argument("--port", type=int, default=8766,
+                                  help="port to run the local web server on (default: 8766)")
+    web_panel_parser.set_defaults(func=_cmd_web_panel)
+
     build_parser = sub.add_parser(
         "build-filter",
         help="compile the event filter for this machine's Qt (needed to record)")
@@ -628,6 +679,8 @@ def build_parser() -> argparse.ArgumentParser:
                             help="path to the shared token (preferred)")
     add_parser.add_argument("--token-env", default="",
                             help="environment variable holding the token")
+    add_parser.add_argument("--ngrok-url", default="",
+                            help="ngrok HTTPS URL (bypasses fingerprint checking)")
     add_parser.add_argument("--insecure-plaintext", action="store_true")
     add_parser.add_argument("--note", default="")
 

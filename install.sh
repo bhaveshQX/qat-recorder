@@ -228,7 +228,7 @@ cmd_vm() {
     # letting the first replay fail with "No such file or directory".
     "$PREFIX/bin/pip" install --quiet pytest \
         || warn "pytest did not install; recording works, replaying needs it"
-    "$PREFIX/bin/pip" install --quiet --force-reinstall --no-deps "$WHEEL" \
+    "$PREFIX/bin/pip" install --quiet --force-reinstall "$WHEEL" \
         || fail "could not install $WHEEL"
     ok "qat + qat_recorder + pytest installed"
 
@@ -272,30 +272,32 @@ setup_agent() {
         "$PREFIX/bin/python" -m qat_recorder.agent.cli --generate-token > "$conf/token"
         chmod 600 "$conf/token"
     fi
-    if [ ! -s "$conf/agent.crt" ]; then
-        "$PREFIX/bin/python" -m qat_recorder.agent.cli --generate-cert \
-            --cert "$conf/agent.crt" --key "$conf/agent.key" \
-            --common-name "$(hostname -f 2>/dev/null || hostname)" > /dev/null
-    fi
-    local fingerprint
-    fingerprint=$("$PREFIX/bin/python" -c \
-        "from qat_recorder.agent.security import fingerprint; print(fingerprint('$conf/agent.crt'))")
+    ok "token in $conf/token"
+
+    # Install pyngrok for tunnel support (optional but recommended)
+    "$PREFIX/bin/pip" install --quiet pyngrok 2>/dev/null \
+        && ok "pyngrok installed (ngrok tunnelling available)" \
+        || warn "pyngrok did not install; ngrok tunnelling will not be available"
+
     local address
     address=$(hostname -I 2>/dev/null | awk '{print $1}')
 
-    ok "token and certificate in $conf"
     cat <<EOF
 
-  Start the agent (foreground, to try it):
+  Start the agent (local network, no tunnel):
     $PREFIX/bin/python -m qat_recorder.agent.cli \\
         --token-file $conf/token \\
-        --cert $conf/agent.crt --key $conf/agent.key \\
+        --insecure-plaintext \\
         --bind 0.0.0.0 --port 8765
 
-  Then on the tester's machine:
-    qat-recorder hosts add ${HOSTNAME:-vm} ${address:-<this-ip>}:8765 \\
-        --fingerprint $fingerprint \\
-        --token-file <copy of $conf/token>
+  Start the agent with ngrok tunnel (accessible from anywhere):
+    $PREFIX/bin/python -m qat_recorder.agent.cli \\
+        --token-file $conf/token \\
+        --ngrok --ngrok-authtoken <your-ngrok-token>
+
+  Then on the tester's machine, open the web panel and paste the
+  agent URL (printed above) into the Connect bar:
+    python -m qat_recorder web-panel
 
   Remember: recording is interactive, so the tester must be able to SEE this
   machine's screen (VNC or X forwarding).
@@ -312,20 +314,16 @@ cmd_local() {
     step "Python environment"
     make_venv
     "$PREFIX/bin/pip" install --quiet "$WHEEL" || fail "could not install $WHEEL"
-    "$PREFIX/bin/pip" install --quiet PySide6-Essentials \
-        || warn "PySide6 did not install; the panel needs it, the CLI does not"
-    ok "qat_recorder installed"
+    ok "qat_recorder installed (includes FastAPI web panel)"
 
     step "Done"
     cat <<EOF
 
-  Register a VM you want to record on:
-    $PREFIX/bin/qat-recorder hosts add vm-01 <ip>:8765 \\
-        --fingerprint <printed by the agent> --token-file ~/.qatrec/token
+  Start the web panel:
+    $PREFIX/bin/python -m qat_recorder web-panel
 
-  Then:
-    $PREFIX/bin/qat-recorder hosts check vm-01
-    $PREFIX/bin/qat-recorder panel --agent vm-01
+  This opens a browser. Paste the agent URL (VM IP or ngrok URL)
+  into the Connect bar to start recording.
 
 EOF
 }

@@ -371,6 +371,12 @@ def _call_for(action, constants: dict) -> list:
         lines.append(f"    qat.take_screenshot({path!r})")
         return lines
 
+    if action.kind is ActionKind.CUSTOM_CODE:
+        code = action.args.get("code", "")
+        for line in code.splitlines():
+            lines.append(f"    {line}")
+        return lines
+
     target = _target_expression(action, constants)
     extra = ""
     if action.args.get("modifiers"):

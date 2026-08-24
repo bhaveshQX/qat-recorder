@@ -226,6 +226,15 @@ class RecorderController:
         self._discard_pending()
         self._set_state(State.RECORDING)
 
+    def inject_custom_code(self, code: str) -> None:
+        if self._state not in (State.RECORDING, State.PAUSED):
+            raise ControllerError(f"cannot inject code while {self._state.value}")
+        if self.session is not None:
+            before = len(self.session.recording.actions)
+            from qat_recorder.ir import Action, ActionKind
+            self.session.recording.add(Action(ActionKind.CUSTOM_CODE, args={"code": code}))
+            self._emit_new_actions(before)
+
     # -- the event pump ----------------------------------------------------
 
     def poll(self) -> int:

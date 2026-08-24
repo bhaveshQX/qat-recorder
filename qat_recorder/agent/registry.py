@@ -50,6 +50,7 @@ class Host:
     token_file: str = ""
     token_env: str = ""
     token: str = ""            # discouraged; see module docstring
+    ngrok_url: str = ""
     insecure_plaintext: bool = False
     note: str = ""
 
@@ -199,7 +200,8 @@ def client_for(host: Host, owner: str = "", timeout: float = 40.0):
         ca_file=host.ca_file or None,
         owner=owner or _current_user(),
         timeout=timeout,
-        insecure_plaintext=bool(host.insecure_plaintext))
+        insecure_plaintext=bool(host.insecure_plaintext),
+        ngrok_url=host.ngrok_url)
 
 
 def _current_user() -> str:

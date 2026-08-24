@@ -28,7 +28,8 @@ class AgentClient:
                  ca_file: Optional[str] = None,
                  owner: str = "",
                  timeout: float = 40.0,
-                 insecure_plaintext: bool = False):
+                 insecure_plaintext: bool = False,
+                 ngrok_url: str = ""):
         self.host = host
         self.port = port
         self.token = token
@@ -37,8 +38,17 @@ class AgentClient:
         self.owner = owner or "unknown"
         self.timeout = timeout
         self.insecure_plaintext = insecure_plaintext
+        self.ngrok_url = ngrok_url
 
-        if insecure_plaintext:
+        if ngrok_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(ngrok_url)
+            self.host = parsed.hostname
+            self.port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+            self.insecure_plaintext = (parsed.scheme == 'http')
+            import ssl
+            self._context = None if self.insecure_plaintext else ssl.create_default_context()
+        elif insecure_plaintext:
             self._context = None
         else:
             self._context = client_context(self.fingerprint, ca_file)
@@ -52,7 +62,7 @@ class AgentClient:
         connection = http.client.HTTPSConnection(
             self.host, self.port, context=self._context, timeout=self.timeout)
         connection.connect()
-        if self.fingerprint:
+        if self.fingerprint and not self.ngrok_url:
             # Python cannot express pinning inside an SSLContext, so it is
             # checked here, after the handshake and before anything is sent.
             actual = peer_fingerprint(connection.sock)

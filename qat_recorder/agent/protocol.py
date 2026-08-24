@@ -40,10 +40,11 @@ class Command(str, Enum):
     PAUSE = "pause"
     RESUME = "resume"
     ARM_CHECKPOINT = "arm_checkpoint"
-    CANCEL_CHECKPOINT = "cancel_checkpoint"
     ADD_CHECKPOINT = "add_checkpoint"
+    CANCEL_CHECKPOINT = "cancel_checkpoint"
     UNDO = "undo"
     STOP = "stop"
+    CUSTOM_CODE = "custom_code"
 
 
 class AgentError(RuntimeError):

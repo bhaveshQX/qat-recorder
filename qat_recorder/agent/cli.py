@@ -53,6 +53,12 @@ def main(argv=None) -> int:
                         help="write a self-signed certificate and exit")
     parser.add_argument("--insecure-plaintext", action="store_true",
                         help="serve without TLS (local testing only)")
+    parser.add_argument("--ngrok", action="store_true",
+                        help="expose the agent via an ngrok tunnel")
+    parser.add_argument("--ngrok-authtoken", default="",
+                        help="ngrok auth token (or set NGROK_AUTHTOKEN env var)")
+    parser.add_argument("--ngrok-domain", default="",
+                        help="custom ngrok domain to use")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -79,39 +85,39 @@ def main(argv=None) -> int:
         return 2
 
     ssl_context = None
-    if args.insecure_plaintext:
-        # Refuse to be insecure by accident: plaintext on anything but loopback
-        # would expose a process-launching service to the network.
-        if args.bind not in ("127.0.0.1", "localhost", "::1"):
+    if args.insecure_plaintext or args.ngrok:
+        if args.insecure_plaintext and args.bind not in ("127.0.0.1", "localhost", "::1") and not args.ngrok:
             print("--insecure-plaintext is only allowed on loopback",
                   file=sys.stderr)
             return 2
-        print("WARNING: serving without TLS on loopback", file=sys.stderr)
+        if args.insecure_plaintext:
+            print("WARNING: serving without TLS on loopback", file=sys.stderr)
     else:
         if not args.cert or not args.key:
             print("TLS requires --cert and --key (or --generate-cert first, or "
-                  "--insecure-plaintext on loopback for a local test)",
+                  "--ngrok, or --insecure-plaintext on loopback for a local test)",
                   file=sys.stderr)
             return 2
-        ssl_context = security.server_context(args.cert, args.key)
 
-    from qat_recorder.agent.server import Agent, AgentServer
+    from qat_recorder.agent.server import Agent
+    from qat_recorder.web.app import run_server
 
     agent = Agent(token, controller_factory=_make_controller_factory())
-    server = AgentServer((args.bind, args.port), agent,
-                         ssl_context=ssl_context, verbose=args.verbose)
-
-    print(f"qat-recorder-agent on {args.bind}:{server.port} "
-          f"(host {agent.host_name})")
-    if args.cert:
+    
+    if args.cert and not args.ngrok:
         print(f"pin this fingerprint: {security.fingerprint(args.cert)}")
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nstopping")
-    finally:
-        server.close()
+    run_server(
+        agent,
+        token=token,
+        host=args.bind,
+        port=args.port,
+        ngrok=args.ngrok,
+        ngrok_authtoken=args.ngrok_authtoken,
+        ngrok_domain=args.ngrok_domain,
+        verbose=args.verbose,
+    )
+
     return 0
 
 

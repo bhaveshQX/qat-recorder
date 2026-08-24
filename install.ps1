@@ -81,24 +81,18 @@ function Invoke-Local {
     & $venvPython -m pip install --quiet --upgrade pip
     Ok "environment at $Prefix"
 
-    & $venvPython -m pip install --quiet --force-reinstall --no-deps $wheelPath
+    & $venvPython -m pip install --quiet --force-reinstall $wheelPath
     if ($LASTEXITCODE -ne 0) { Fail "could not install $wheelPath" }
-    & $venvPython -m pip install --quiet PySide6-Essentials
-    if ($LASTEXITCODE -ne 0) { Warn 'PySide6 did not install; the panel needs it, the CLI does not' }
-    Ok 'qat_recorder installed'
+    Ok 'qat_recorder installed (includes FastAPI web panel)'
 
     Step 'Done'
-    $recorder = Join-Path $Prefix 'Scripts\qat-recorder.exe'
     Write-Host @"
 
-  Register the VM you want to record on:
-    $recorder hosts add vm-01 <ip>:8765 ``
-        --fingerprint <printed by the agent on the VM> ``
-        --token-file `$env:USERPROFILE\.qatrec\token
+  Start the web panel:
+    $venvPython -m qat_recorder web-panel
 
-  Then:
-    $recorder hosts check vm-01
-    $recorder panel --agent vm-01
+  This opens a browser. Paste the agent URL (VM IP or ngrok URL)
+  into the Connect bar to start recording.
 
   Recording is interactive, so you also need to SEE the VM's screen -
   VNC or X forwarding. The panel drives it; it does not display it.
@@ -143,8 +137,8 @@ function Invoke-Doctor {
         Ok "environment  $Prefix"
         $version = & $venvPython -c "import qat_recorder; print(qat_recorder.__version__)" 2>$null
         if ($LASTEXITCODE -eq 0) { Ok "qat_recorder $version" } else { Warn 'qat_recorder is NOT installed' }
-        & $venvPython -c "import PySide6" 2>$null
-        if ($LASTEXITCODE -eq 0) { Ok 'PySide6 (panel available)' } else { Warn 'PySide6 missing - CLI works, panel does not' }
+        & $venvPython -c "import fastapi" 2>$null
+        if ($LASTEXITCODE -eq 0) { Ok 'FastAPI (web panel available)' } else { Warn 'FastAPI missing - run: .\install.ps1 local' }
     } else {
         Warn "no environment at $Prefix - run: .\install.ps1 local"
     }

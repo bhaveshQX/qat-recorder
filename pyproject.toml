@@ -7,7 +7,7 @@ name = "qat-recorder"
 version = "0.1.0"
 description = "Record-and-playback tooling built on Qat (Qt Application Tester)"
 requires-python = ">=3.9"
-dependencies = ["qat>=1.7"]
+dependencies = ["qat>=1.7", "fastapi>=0.100", "uvicorn[standard]>=0.20"]
 
 [project.optional-dependencies]
 # `qat` is here as well as in dependencies on purpose: tests/test_generated_api.py
@@ -18,6 +18,8 @@ dev = ["pytest>=7", "PySide6-Essentials", "qat>=1.7"]
 # The control panel is the only part that needs Qt bindings in the recorder
 # process itself; capture, generation and replay do not.
 ui = ["PySide6-Essentials"]
+# ngrok is only needed if you want to expose the agent through a tunnel.
+ngrok = ["pyngrok>=7"]
 
 [project.scripts]
 qat-recorder = "qat_recorder.cli:main"
@@ -27,6 +29,7 @@ qat-recorder-agent = "qat_recorder.agent.cli:main"
 
 [project.gui-scripts]
 qat-recorder-panel = "qat_recorder.ui.panel:main"
+qat-recorder-web = "qat_recorder.cli:_cmd_web_panel"
 
 [tool.setuptools.packages.find]
 include = ["qat_recorder*"]
@@ -34,8 +37,8 @@ include = ["qat_recorder*"]
 [tool.setuptools.package-data]
 # The launcher wrapper and the C++ source are both needed at runtime on the VM,
 # so they must travel inside the wheel rather than being found relative to a
-# source checkout.
-qat_recorder = ["resources/*.sh", "resources/native/*"]
+# source checkout. The web/static/ directory holds the pre-built React UI.
+qat_recorder = ["resources/*.sh", "resources/native/*", "web/static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

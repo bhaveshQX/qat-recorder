@@ -69,6 +69,7 @@ class ActionKind(str, Enum):
     VERIFY_PROPERTY = "verify_property"
     WAIT_MISSING = "wait_missing"
     SCREENSHOT = "screenshot"
+    CUSTOM_CODE = "custom_code"
 
 
 def secret_ref(name: str) -> dict:

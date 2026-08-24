@@ -252,12 +252,14 @@ class Agent:
                     controller.drop_last_action()
                 elif action is Command.STOP:
                     controller.stop()
+                elif action is Command.CUSTOM_CODE:
+                    controller.inject_custom_code(args.get("code", ""))
             except Exception as error:                        # noqa: BLE001
                 raise AgentError(str(error), 409)
             return {"state": controller.state.value,
                     "summary": controller.summary()}
 
-    def artifacts(self, session_id: str) -> dict:
+    def artifacts(self, session_id: str, custom_script: str = None) -> dict:
         from qat_recorder.emit import emit_gherkin, emit_python, emit_steps
 
         session = self._require(session_id)
@@ -266,13 +268,13 @@ class Agent:
             if recording is None:
                 raise AgentError("nothing recorded", 409)
             problems = recording.validate()
-            if problems:
+            if problems and not custom_script:
                 raise AgentError("recording is not valid: " + "; ".join(problems),
                                  409)
             from qat_recorder.emit.python import emit_object_map
 
             files = {
-                "test_recorded.py": emit_python(recording),
+                "test_recorded.py": custom_script if custom_script is not None else emit_python(recording),
                 "recorded.feature": emit_gherkin(recording),
                 "steps.py": emit_steps(recording),
                 "objects.json": emit_object_map(recording),
@@ -300,6 +302,34 @@ class Agent:
                 "recording": recording.to_dict(),
                 "files": files,
                 "directory": str(directory),
+            }
+
+    def preview(self, session_id: str) -> dict:
+        from qat_recorder.emit import emit_python
+        
+        session = self._require(session_id)
+        with session.lock:
+            recording = session.controller.recording
+            if recording is None:
+                return {"script": "", "dropped": "", "failures": []}
+            
+            try:
+                script = emit_python(recording)
+            except Exception:
+                script = "# Recording invalid or empty"
+                
+            failures_list = []
+            dropped = ""
+            capture = getattr(session.controller, "session", None)
+            if capture is not None and capture.failures:
+                from qat_recorder.capture import dropped_report
+                failures_list = list(capture.failures)
+                dropped = dropped_report(capture.failures)
+                
+            return {
+                "script": script,
+                "dropped": dropped,
+                "failures": failures_list
             }
 
     # -- the library -------------------------------------------------------
