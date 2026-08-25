@@ -908,6 +908,10 @@ body {
 
 .script-editor-text {
   width: 100%;
+  /* Its height is measured from its content, so it must not be shrunk to fit
+     the pane: a flex item shrinks before its container overflows, and a
+     container that never overflows never scrolls. */
+  flex-shrink: 0;
   padding: 16px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -922,6 +926,7 @@ body {
 }
 
 .drop-gap-slot {
+  flex-shrink: 0;
   padding: 0 16px;
 }
 
@@ -982,4 +987,11 @@ body {
   display: flex;
   flex-shrink: 0;
   gap: 8px;
+}
+
+.drop-gap-note {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
 }

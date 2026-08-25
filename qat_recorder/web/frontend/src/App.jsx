@@ -71,6 +71,7 @@ export default function App() {
   const [leftWidth, setLeftWidth] = useState(58);
 
   const wsRef = useRef(null);
+  const gapsRef = useRef(null);
 
   // ── helpers ────────────────────────────────────────
   const isStep = (a) => a.kind !== 'launch';
@@ -120,7 +121,16 @@ export default function App() {
 
     const ws = connectEvents(agentUrl, sid, token, (msg) => {
       if (msg.state) setState(msg.state);
-      if (msg.summary) setSummary(msg.summary);
+      if (msg.summary) {
+        setSummary(msg.summary);
+        // A gap closing is the one change that happens without the panel
+        // asking for it -- the operator filled it by pointing at the control
+        // in the application. Fetch the script again so it shows.
+        if (gapsRef.current !== null && msg.summary.gaps !== gapsRef.current) {
+          setRefreshTick(tick => tick + 1);
+        }
+        gapsRef.current = msg.summary.gaps ?? null;
+      }
 
       if (msg.actions && msg.actions.length > 0) {
         setActions(prev => {
@@ -305,6 +315,20 @@ export default function App() {
       setRefreshTick(tick => tick + 1);
     } catch (e) {
       updateStatus(`Could not insert that step: ${e.message}`);
+    }
+  };
+
+  // The strongest fix available, and the one that needs no code at all: the
+  // operator shows the recorder the control it could not name. The click goes
+  // through the same resolver a recorded step goes through, so the step it
+  // produces carries locators validated against the running application.
+  const pointAtGap = async (index) => {
+    if (!sessionId) return;
+    try {
+      await api.command(agentUrl, sessionId, 'arm_repair', { index }, token);
+      updateStatus('Now click that control in the application — the click fills the gap and is not recorded as a step of its own');
+    } catch (e) {
+      updateStatus(`Could not start pointing: ${e.message}`);
     }
   };
 
@@ -538,6 +562,11 @@ export default function App() {
                     script={isScriptEdited ? customScript : scriptText}
                     readOnly={recording}
                     busy={busy}
+                    canPoint={state === S.RECORDING || state === S.PICKING}
+                    picking={state === S.PICKING}
+                    onPoint={pointAtGap}
+                    onCancelPoint={() => sendCommand('cancel_checkpoint')
+                      .then(() => updateStatus('Stopped waiting for a click'))}
                     onRepair={repairGap}
                     onWriteCode={(drop) => {
                       setRepairTarget(drop.index);

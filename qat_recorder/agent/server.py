@@ -257,6 +257,8 @@ class Agent:
                 elif action is Command.REPAIR_DROP:
                     controller.repair_drop(int(args.get("index", -1)),
                                            args.get("code", ""))
+                elif action is Command.ARM_REPAIR:
+                    controller.arm_repair(int(args.get("index", -1)))
             except Exception as error:                        # noqa: BLE001
                 raise AgentError(str(error), 409)
             return {"state": controller.state.value,

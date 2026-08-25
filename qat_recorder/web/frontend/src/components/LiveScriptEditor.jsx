@@ -84,7 +84,7 @@ function fixesFor(data) {
   return [];
 }
 
-function DroppedEventWidget({ data, onRepair, onWriteCode, busy }) {
+function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy }) {
   const [typed, setTyped] = useState('');
   const fixes = fixesFor(data);
   const def = definitionFrom(data.seen);
@@ -99,6 +99,13 @@ function DroppedEventWidget({ data, onRepair, onWriteCode, busy }) {
         {Object.keys(def).length > 0 && (
           <div className="drop-gap-seen">{JSON.stringify(def)}</div>
         )}
+        {canPoint && (
+          <div className="drop-gap-note">
+            {picking
+              ? 'Waiting — click that control in the application.'
+              : 'Point at it and the recorder identifies it the way it identifies every other step. Nothing to write, and the locator is checked against the running application.'}
+          </div>
+        )}
         {fixes.some(fix => fix.needsText) && (
           <input
             className="drop-gap-input"
@@ -111,12 +118,37 @@ function DroppedEventWidget({ data, onRepair, onWriteCode, busy }) {
       </div>
 
       <div className="drop-gap-actions">
+        {/* First, because it is the only fix that produces a locator anyone
+            checked. The rest are assembled from what the filter reported about
+            an object it could not find. */}
+        {canPoint && (
+          picking ? (
+            // Armed. The operator may have changed their mind, and without this
+            // the only way out is to click something in the application.
+            <button
+              className="btn btn-secondary btn-sm"
+              title="stop waiting for a click"
+              onClick={onCancelPoint}
+            >
+              Waiting — cancel
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary btn-sm"
+              title="click the control in the application and the recorder works out how to address it"
+              disabled={busy}
+              onClick={() => onPoint(data.index)}
+            >
+              Point at it
+            </button>
+          )
+        )}
         {fixes.map(fix => (
           <button
             key={fix.label}
-            className="btn btn-primary btn-sm"
-            title={fix.hint}
-            disabled={busy || (fix.needsText && !typed.trim())}
+            className={canPoint ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
+            title={`${fix.hint} — this locator is not checked against the application`}
+            disabled={busy || picking || (fix.needsText && !typed.trim())}
             onClick={() => onRepair(
               data.index,
               typeof fix.code === 'function' ? fix.code(typed) : fix.code)}
@@ -126,7 +158,7 @@ function DroppedEventWidget({ data, onRepair, onWriteCode, busy }) {
         ))}
         <button
           className="btn btn-ghost btn-sm"
-          disabled={busy}
+          disabled={busy || picking}
           title="write the step yourself"
           onClick={() => onWriteCode(data)}
         >
@@ -137,7 +169,7 @@ function DroppedEventWidget({ data, onRepair, onWriteCode, busy }) {
   );
 }
 
-export default function LiveScriptEditor({ script, onChange, onRepair, onWriteCode, readOnly, busy }) {
+export default function LiveScriptEditor({ script, onChange, onRepair, onPoint, onCancelPoint, onWriteCode, canPoint, picking, readOnly, busy }) {
   // Derived during render, not held in state. The script prop is the single
   // source of truth: an edit goes up through onChange and comes back down as
   // new text, so keeping a parsed copy in state only added a second render per
@@ -232,6 +264,10 @@ export default function LiveScriptEditor({ script, onChange, onRepair, onWriteCo
               <DroppedEventWidget
                 data={part.data}
                 busy={busy}
+                canPoint={canPoint}
+                picking={picking}
+                onPoint={onPoint}
+                onCancelPoint={onCancelPoint}
                 onRepair={onRepair}
                 onWriteCode={onWriteCode}
               />

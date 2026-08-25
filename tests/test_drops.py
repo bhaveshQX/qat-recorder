@@ -283,3 +283,84 @@ def test_an_empty_repair_is_refused(controller):            # noqa: F811
     _record_a_gap(controller)
     with pytest.raises(ControllerError):
         controller.repair_drop(0, "   ")
+
+
+# --- filling one by pointing at it -----------------------------------------
+
+def _point_at(controller, cls, object_name):                # noqa: F811
+    """What the operator does: click the control in the application."""
+    from tests.test_capture import event
+    controller._test["receiver"].push(
+        event("mouse_press", 400, cls, object_name, button=1),
+        event("mouse_release", 440, cls, object_name, button=1))
+    controller.poll()
+
+
+def test_pointing_at_a_control_fills_the_gap_with_a_real_step(controller):  # noqa: F811
+    """The strongest fix, and the one that needs no code.
+
+    The pick goes through the same resolver a recorded step goes through, so
+    what lands in the gap carries locators that were checked against the running
+    application -- not a definition assembled from what the filter reported
+    about an object it could not find.
+    """
+    _record_a_gap(controller)
+    controller.arm_repair(0)
+    assert controller.state is State.PICKING
+
+    _point_at(controller, "QPushButton", "loginButton")
+
+    assert controller.state is State.RECORDING
+    filled = controller.recording.actions[-1]
+    assert filled.kind is ActionKind.CLICK
+    assert filled.target.definition["objectName"] == "loginButton"
+    assert filled.target.robustness.rank <= 1          # as good as a recorded step
+    assert controller.recording.open_drops() == []
+
+
+def test_the_pointing_click_is_not_recorded_as_a_step_of_its_own(controller):  # noqa: F811
+    _record_a_gap(controller)
+    before = len(controller.recording.actions)
+    controller.arm_repair(0)
+    _point_at(controller, "QPushButton", "loginButton")
+    # Exactly one action added: the repair. Not the click that chose it.
+    assert len(controller.recording.actions) == before + 1
+
+
+def test_the_step_matches_the_event_that_was_lost(controller):  # noqa: F811
+    """A lost double-click asks for a double-click, not a click."""
+    from tests.test_capture import event
+    controller.start()
+    controller._test["receiver"].push(
+        event("mouse_double", 200, *NOWHERE, button=1))
+    controller.poll()
+    assert len(controller.recording.drops) == 1
+
+    controller.arm_repair(0)
+    _point_at(controller, "QPushButton", "loginButton")
+    assert controller.recording.actions[-1].kind is ActionKind.DOUBLE_CLICK
+
+
+def test_pointing_needs_the_application_to_be_running(controller):  # noqa: F811
+    _record_a_gap(controller)
+    controller.stop()
+    with pytest.raises(ControllerError):
+        controller.arm_repair(0)
+
+
+def test_pointing_at_a_gap_that_is_not_there_is_refused(controller):  # noqa: F811
+    _record_a_gap(controller)
+    with pytest.raises(ControllerError):
+        controller.arm_repair(7)
+
+
+def test_a_checkpoint_pick_is_still_a_checkpoint(controller):  # noqa: F811
+    """Arming a repair must not leave the next checkpoint filling gaps."""
+    _record_a_gap(controller)
+    controller.arm_repair(0)
+    controller.cancel_checkpoint()
+
+    controller.arm_checkpoint()
+    _point_at(controller, "QPushButton", "loginButton")
+    assert controller._test["picked"], "the checkpoint modal was never offered"
+    assert controller.recording.open_drops() != []

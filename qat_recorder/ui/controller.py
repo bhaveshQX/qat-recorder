@@ -114,6 +114,9 @@ class RecorderController:
         self.events_seen = 0
         self.events_dropped = 0
         self._drop_next_release = False
+        #: The gap the next picked object fills, or None when picking is for a
+        #: checkpoint. Set by arm_repair, cleared by the pick itself.
+        self._repairing: Optional[int] = None
         self.picked_target = None
         self.picked_node = None
         self.picked_properties: dict = {}
@@ -335,26 +338,87 @@ class RecorderController:
         self.picked_target = None
         self.picked_node = None
         self.picked_properties = {}
+        self._repairing = None
+        self._set_state(State.PICKING)
+
+    def arm_repair(self, index: int) -> None:
+        """Fill the gap at `index` with whatever the operator points at next.
+
+        The application is still running and the operator is still in front of
+        it, so the strongest thing the recorder can do is watch them show it the
+        control it could not name. What comes back is not a guess assembled from
+        what the filter reported -- it goes through the same resolver a recorded
+        step goes through, so the step carries every locator that identifies the
+        object right now, validated against the running application.
+
+        That is the difference between a fix and a plausible fix.
+        """
+        if self._state is not State.RECORDING:
+            raise ControllerError(
+                f"cannot point at anything while {self._state.value}; "
+                "the application has to be running")
+        recording = self.recording
+        if recording is None or not 0 <= index < len(recording.drops):
+            raise ControllerError(f"no gap at {index}")
+        if recording.drops[index].repaired:
+            raise ControllerError(f"the gap at {index} has already been filled")
+
+        self.picked_target = None
+        self.picked_node = None
+        self.picked_properties = {}
+        self._repairing = index
         self._set_state(State.PICKING)
 
     def cancel_checkpoint(self) -> None:
         if self._state is not State.PICKING:
             return
+        self._repairing = None
         self._set_state(State.RECORDING)
+
+    #: What the operator's click should become, by the kind of event that was
+    #: lost. Anything else is a click: it is what they did to the control.
+    _REPAIR_KINDS = {
+        "mouse_double": ActionKind.DOUBLE_CLICK,
+        "close_window": ActionKind.CLOSE_WINDOW,
+    }
 
     def _pick(self, event: RawEvent) -> None:
         self._drop_next_release = True
         resolved = self.session.resolve_locator(event.target)
+        repairing, self._repairing = self._repairing, None
         self._set_state(State.RECORDING)
         if resolved is None:
-            self._report("that object could not be identified; nothing to check")
+            self._report("that object could not be identified either"
+                         if repairing is not None else
+                         "that object could not be identified; nothing to check")
             return
         node, target = resolved
         self.picked_node = node
         self.picked_target = target
         self.picked_properties = self.session.properties_of(node)
+
+        if repairing is not None:
+            self._fill_gap_with(repairing, target)
+            return
         if self.on_picked:
             self.on_picked(target, self.picked_properties)
+
+    def _fill_gap_with(self, index: int, target) -> None:
+        """Turn a pointed-at object into the step the gap was missing."""
+        recording = self.recording
+        drop = recording.drops[index]
+        kind = self._REPAIR_KINDS.get(drop.kind, ActionKind.CLICK)
+        try:
+            recording.repair(index, Action(
+                kind, target=target,
+                t=recording.actions[-1].t if recording.actions else 0.0,
+                note=f"fills the gap left by {drop.label}"))
+        except (IndexError, ValueError) as error:
+            self._report(str(error))
+            return
+        self._report(f"filled the gap with {kind.value} on "
+                     f"{target.label or 'that object'} "
+                     f"({target.robustness.value})")
 
     def add_checkpoint(self, property_name: str,
                        expected: Any = None) -> Optional[Action]:
