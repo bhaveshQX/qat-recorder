@@ -53,6 +53,10 @@ stage_offline() {
     # the core suite stays runnable on a machine with no Qt bindings at all.
     "$py" -m pip install --quiet PySide6-Essentials 2>/dev/null || \
         echo "note: PySide6 unavailable, panel tests will skip"
+    # The same bargain for the browser panel: without FastAPI its tests skip
+    # rather than fail, and the recorder itself needs neither.
+    "$py" -m pip install --quiet fastapi "uvicorn[standard]" httpx 2>/dev/null || \
+        echo "note: FastAPI unavailable, web panel tests will skip"
     QT_QPA_PLATFORM=offscreen PYTHONPATH="$ROOT" "$py" -m pytest tests -q
 }
 

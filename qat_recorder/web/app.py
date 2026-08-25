@@ -266,7 +266,7 @@ def create_app(agent, token: str = "") -> FastAPI:
 
     @app.get("/")
     async def index():
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(_STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     # Mount static files AFTER explicit routes so they don't shadow them
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

@@ -180,11 +180,71 @@ class Action:
 
 
 @dataclass
+class Drop:
+    """An event that could not be turned into a step, and where that happened.
+
+    Deliberately not an Action. An action is something the generated test will
+    do; this is the exact opposite -- something the operator did that the test
+    will *not* do -- and the two must not share a list. Keeping drops out of
+    `actions` is what stops a thing nobody could identify from reaching the
+    player, the object map, the Gherkin and the override block, none of which
+    have anything true to say about it.
+
+    What it carries instead is a position. `after` is the number of actions that
+    had been recorded when the event was dropped, so the gap can be shown where
+    it happened rather than counted at the end -- which is all the operator was
+    ever given, minutes after the click, from the other side of a VM.
+    """
+
+    reason: str
+    #: The raw event kind the filter sent: mouse_press, key_press, close_window.
+    kind: str = ""
+    #: What describe() said the event was delivered to. For a human to read.
+    label: str = ""
+    #: What the filter reported about the object -- class, objectName, text.
+    #: NOT a Qat definition: nothing here was validated against the application,
+    #: and calling it a definition is how an unusable locator ends up in a test.
+    seen: dict = field(default_factory=dict)
+    #: Index into `actions`: this many steps had been recorded before the drop.
+    after: int = 0
+    t: float = 0.0
+    #: Set once the operator has filled the gap. A repaired drop is history: it
+    #: is kept so the recording still says what was lost, and emits nothing.
+    repaired: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "reason": self.reason,
+            "kind": self.kind,
+            "label": self.label,
+            "seen": dict(self.seen),
+            "after": self.after,
+            "t": round(self.t, 4),
+            "repaired": self.repaired,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Drop":
+        return cls(
+            reason=data.get("reason", ""),
+            kind=data.get("kind", ""),
+            label=data.get("label", ""),
+            seen=dict(data.get("seen", {})),
+            after=int(data.get("after", 0)),
+            t=float(data.get("t", 0.0)),
+            repaired=bool(data.get("repaired", False)),
+        )
+
+
+@dataclass
 class Recording:
     """A complete capture session."""
 
     app: str
     actions: list = field(default_factory=list)
+    #: Events that could not be recorded, each holding the position it happened
+    #: at. Parallel to `actions`, never inside it -- see Drop.
+    drops: list = field(default_factory=list)
     started_at: str = ""
     meta: dict = field(default_factory=dict)
     schema: int = SCHEMA_VERSION
@@ -198,6 +258,48 @@ class Recording:
     def add(self, action: Action) -> Action:
         self.actions.append(action)
         return action
+
+    def add_drop(self, drop: Drop) -> Drop:
+        """Record an event that could not become a step, where it happened."""
+        self.drops.append(drop)
+        return drop
+
+    def insert_at(self, index: int, action: Action) -> Action:
+        """Put a step at `index`, and move every drop after it along.
+
+        A drop's position is an index into `actions`, so inserting one shifts
+        the gaps that come after it. Doing that here, in the one place that can
+        see both lists, is what stops a repaired script from showing its
+        remaining gaps a step too early.
+        """
+        index = max(0, min(index, len(self.actions)))
+        self.actions.insert(index, action)
+        for drop in self.drops:
+            if drop.after >= index:
+                drop.after += 1
+        return action
+
+    def repair(self, position: int, action: Action) -> Optional[Drop]:
+        """Fill the gap at `position` with a step, and mark it repaired.
+
+        `position` indexes `drops`. The step goes exactly where the dropped
+        event was, so the test does what the operator did, in the order they
+        did it.
+        """
+        if not 0 <= position < len(self.drops):
+            raise IndexError(f"no drop at {position}")
+        drop = self.drops[position]
+        if drop.repaired:
+            raise ValueError(f"the gap at {position} has already been filled")
+        at = drop.after
+        self.insert_at(at, action)
+        drop.after = at
+        drop.repaired = True
+        return drop
+
+    def open_drops(self) -> list:
+        """The gaps nobody has filled yet."""
+        return [drop for drop in self.drops if not drop.repaired]
 
     # -- analysis -----------------------------------------------------------
 
@@ -226,8 +328,12 @@ class Recording:
         for index, action in enumerate(self.actions):
             if not isinstance(action.kind, ActionKind):
                 problems.append(f"action {index}: unknown kind {action.kind!r}")
+            # CUSTOM_CODE carries the call itself, so there is nothing for a
+            # target to identify -- the same reason launch, close and screenshot
+            # are exempt.
             needs_target = action.kind not in (
-                ActionKind.LAUNCH, ActionKind.CLOSE, ActionKind.SCREENSHOT)
+                ActionKind.LAUNCH, ActionKind.CLOSE, ActionKind.SCREENSHOT,
+                ActionKind.CUSTOM_CODE)
             if needs_target and action.target is None:
                 problems.append(f"action {index}: {action.kind.value} has no target")
             if action.target is not None and not action.target.definition:
@@ -243,6 +349,7 @@ class Recording:
             "started_at": self.started_at,
             "meta": self.meta,
             "actions": [action.to_dict() for action in self.actions],
+            "drops": [drop.to_dict() for drop in self.drops],
         }
 
     @classmethod
@@ -254,6 +361,10 @@ class Recording:
         return cls(
             app=data["app"],
             actions=[Action.from_dict(item) for item in data.get("actions", [])],
+            # Absent from every recording written before drops were located, and
+            # an empty list is exactly right for those: nothing was known to be
+            # missing because nothing was looking.
+            drops=[Drop.from_dict(item) for item in data.get("drops", [])],
             started_at=data.get("started_at", ""),
             meta=dict(data.get("meta", {})),
             schema=schema,

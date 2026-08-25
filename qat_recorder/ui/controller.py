@@ -226,14 +226,55 @@ class RecorderController:
         self._discard_pending()
         self._set_state(State.RECORDING)
 
+    #: Editing the recording is legal while it is being made and after it has
+    #: been stopped. Not before: there is nothing to edit, and not while idle.
+    _EDITABLE = (State.RECORDING, State.PAUSED, State.STOPPED)
+
     def inject_custom_code(self, code: str) -> None:
-        if self._state not in (State.RECORDING, State.PAUSED):
-            raise ControllerError(f"cannot inject code while {self._state.value}")
-        if self.session is not None:
-            before = len(self.session.recording.actions)
-            from qat_recorder.ir import Action, ActionKind
-            self.session.recording.add(Action(ActionKind.CUSTOM_CODE, args={"code": code}))
-            self._emit_new_actions(before)
+        """Append a step the operator wrote themselves."""
+        if self._state not in self._EDITABLE:
+            raise ControllerError(f"cannot insert a step while {self._state.value}")
+        if self.session is None:
+            raise ControllerError("nothing recorded")
+        from qat_recorder.ir import Action, ActionKind  # noqa: PLC0415
+
+        before = len(self.session.recording.actions)
+        self.session.recording.add(
+            Action(ActionKind.CUSTOM_CODE, args={"code": code}))
+        self._emit_new_actions(before)
+
+    def repair_drop(self, index: int, code: str) -> dict:
+        """Fill the gap at `index` with a step, where the gap is.
+
+        The point of doing this against the recording rather than against the
+        generated text: everything is emitted from the recording -- the pytest
+        file, the feature file, the step definitions, the object map -- and
+        `save_as` regenerates all of them before it verifies. A fix that lives
+        only in the script pane is discarded by the act of keeping it.
+        """
+        if self._state not in self._EDITABLE:
+            raise ControllerError(f"cannot fill a gap while {self._state.value}")
+        if self.session is None:
+            raise ControllerError("nothing recorded")
+        code = (code or "").strip()
+        if not code:
+            raise ControllerError("a repair needs some code to insert")
+
+        from qat_recorder.ir import Action, ActionKind  # noqa: PLC0415
+
+        recording = self.session.recording
+        if not 0 <= index < len(recording.drops):
+            raise ControllerError(f"no gap at {index}")
+        note = f"fills the gap left by {recording.drops[index].label}"
+        try:
+            drop = recording.repair(
+                index, Action(ActionKind.CUSTOM_CODE, args={"code": code},
+                              note=note))
+        except (IndexError, ValueError) as error:
+            raise ControllerError(str(error)) from error
+
+        self._report(f"filled the gap at step {drop.after}: {drop.label}")
+        return {"index": index, "after": drop.after, "open": len(recording.open_drops())}
 
     # -- the event pump ----------------------------------------------------
 
@@ -353,6 +394,10 @@ class RecorderController:
             "dropped": self.events_dropped,
             "actions": max(0, len(actions) - 1),      # the LAUNCH is bookkeeping
             "unresolved": self.session.unresolved if self.session else 0,
+            # Gaps nobody has filled yet. `unresolved` counts raw events and
+            # counts a press and its release twice; this counts the things the
+            # operator is actually being asked about.
+            "gaps": len(recording.open_drops()) if recording else 0,
             "fragile": len(weak),
             "secrets": len(recording.secrets()) if recording else 0,
         }

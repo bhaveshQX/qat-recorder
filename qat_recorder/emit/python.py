@@ -349,6 +349,29 @@ def _item_expression(action, constants: dict) -> str:
     return f"row({', '.join(parts)})"
 
 
+
+#: The panel reads these back out of the generated script to show a gap where it
+#: happened and offer to fill it. One line, and a comment, so a script with an
+#: open gap is still valid Python and still runs -- it simply does not do the
+#: thing nobody could name.
+DROP_MARKER = "# QAT_DROPPED_EVENT: "
+
+
+def _drop_marker(index: int, drop) -> str:
+    """One line describing a gap, machine-readable, at four-space indent.
+
+    `index` is the drop's position in `recording.drops`, and it is what the
+    panel sends back to say which gap it is filling.
+    """
+    return "    " + DROP_MARKER + json.dumps({
+        "index": index,
+        "kind": drop.kind,
+        "reason": drop.reason,
+        "label": drop.label,
+        "seen": drop.seen,
+    }, ensure_ascii=False)
+
+
 def _call_for(action, constants: dict) -> list:
     """Return the source lines for one action."""
     lines = []
@@ -637,12 +660,37 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     # NameError before a single step runs, which is exactly what shipped.
     if checks:
         body.append("    preconditions()")
-    for action in recording.actions:
+    # Gaps are placed among the steps rather than listed at the end. A drop
+    # after three actions belongs between the third and the fourth, which is the
+    # only place it means anything to the person who has to fill it.
+    open_gaps = {}
+    for position, drop in enumerate(recording.drops):
+        if not drop.repaired:
+            open_gaps.setdefault(drop.after, []).append((position, drop))
+
+    def _gaps_at(index: int) -> list:
+        return [_drop_marker(position, drop)
+                for position, drop in open_gaps.get(index, ())]
+
+    for index, action in enumerate(recording.actions):
+        body.extend(_gaps_at(index))
         body.extend(_call_for(action, constants))
+    body.extend(_gaps_at(len(recording.actions)))
     if not body:
         body.append("    pass")
     out.extend(body)
     out.append("")
+
+    gaps = recording.open_drops()
+    if gaps:
+        out.append("")
+        out.append(f"# {len(gaps)} event(s) could not be recorded, and this "
+                   "script does not do them.")
+        out.append("# It will pass without them. Each is marked above, at the "
+                   "point it happened.")
+        for drop in gaps:
+            out.append(f"#   {drop.kind} on {drop.label}: {drop.reason}")
+        out.append("")
 
     weakest = recording.weakest_targets()
     if weakest:

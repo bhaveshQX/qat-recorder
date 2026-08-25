@@ -34,7 +34,8 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
-from qat_recorder.ir import Action, ActionKind, Recording, Robustness, Target, secret_ref
+from qat_recorder.ir import (
+    Action, ActionKind, Drop, Recording, Robustness, Target, secret_ref)
 from qat_recorder.items import (
     combo_owner, discover_row, is_view, item_definition, item_text_of,
     selection_property,
@@ -76,6 +77,10 @@ MOD_META = 0x10000000
 COMMAND_MODIFIERS = MOD_CONTROL | MOD_ALT | MOD_META
 
 BUTTON_NAMES = {1: "left", 2: "right", 4: "middle"}
+
+#: A press and its release are one interaction, so they are one gap. The
+#: same window flush_stale() uses to group events that arrived together.
+_SAME_INTERACTION_S = 0.5
 
 #: Menus are operated by pressing on the bar and releasing on an item, which
 #: looks exactly like a drag and is nothing like one.
@@ -1302,11 +1307,46 @@ class CaptureSession:
         return (node, target), "", note
 
     def _drop(self, event: RawEvent, reason: str = "") -> None:
-        """Count an event that could not be recorded, and say why."""
+        """Count an event that could not be recorded, say why, and say where.
+
+        The count and the reason are what unresolved.txt has always been. The
+        position is new, and it is the whole difference between "two events were
+        lost during this session" and a gap the operator can see between the two
+        steps it fell between.
+        """
         self.unresolved += 1
-        self.failures.append(
-            f"{event.kind} on {describe(event.target)}: "
-            f"{reason or self._last_reason or 'unresolved'}")
+        why = reason or self._last_reason or "unresolved"
+        label = describe(event.target)
+        self.failures.append(f"{event.kind} on {label}: {why}")
+        self._record_drop(event, why, label)
+
+    def _record_drop(self, event: RawEvent, why: str, label: str) -> None:
+        """Place the gap, folding a press and its release into one.
+
+        A click that cannot be recorded arrives twice, exactly as a click that
+        can does -- and one interaction the operator cannot see the result of
+        should be one gap they are asked about, not two identical ones.
+        """
+        drop = Drop(
+            reason=why,
+            kind=event.kind,
+            label=label,
+            seen={key: value for key, value in (
+                ("class", event.target.cls),
+                ("objectName", event.target.object_name),
+                ("text", event.target.text),
+            ) if value},
+            after=len(self.recording.actions),
+            t=self._elapsed(event.t),
+        )
+        if self.recording.drops:
+            previous = self.recording.drops[-1]
+            same_gap = (previous.after == drop.after
+                        and previous.label == drop.label
+                        and previous.reason == drop.reason)
+            if same_gap and abs(drop.t - previous.t) <= _SAME_INTERACTION_S:
+                return
+        self.recording.add_drop(drop)
 
     def _target_for_node(self, node) -> Target:
         return self.resolver.resolve(node)

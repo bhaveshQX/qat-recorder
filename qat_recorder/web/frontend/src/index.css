@@ -351,6 +351,7 @@ body {
   flex-direction: column;
   min-width: 200px;
   overflow: hidden;
+  min-height: 0;
 }
 
 .pane-left {
@@ -867,4 +868,118 @@ body {
   font-size: 13.5px;
   color: var(--text-muted);
   max-width: 400px;
+}
+
+/* ── The script pane, and the gaps in it ──────────────────────────────────
+   A dropped event is drawn where it happened, between the steps it fell
+   between. The script is still the script; the gap is an interruption in it,
+   which is exactly what it was in the session. */
+
+.script-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.script-editor-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 10px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--color-unresolved);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.script-editor-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.script-editor-text {
+  width: 100%;
+  padding: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow: hidden;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.drop-gap-slot {
+  padding: 0 16px;
+}
+
+.drop-gap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 4px 0;
+  padding: 12px;
+  background: var(--bg-elevated);
+  /* Red, not amber: a weak locator is a risk, and this is a step the test does
+     not perform at all. */
+  border: 1px solid var(--color-unresolved);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.drop-gap-body {
+  min-width: 0;
+}
+
+.drop-gap-title {
+  margin-bottom: 4px;
+  color: var(--color-unresolved);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.drop-gap-reason {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.drop-gap-seen {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.drop-gap-input {
+  margin-top: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  outline: none;
+}
+
+.drop-gap-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
 }

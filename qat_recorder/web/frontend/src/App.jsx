@@ -10,6 +10,7 @@ import DetailsPane from './components/DetailsPane';
 import CounterBar from './components/CounterBar';
 import CheckpointModal from './components/CheckpointModal';
 import KeepModal from './components/KeepModal';
+import LiveScriptEditor from './components/LiveScriptEditor';
 
 // States mirror qat_recorder.ui.controller.State
 const S = { IDLE: 'idle', RECORDING: 'recording', PAUSED: 'paused', PICKING: 'picking', STOPPED: 'stopped' };
@@ -44,10 +45,17 @@ export default function App() {
   const [customScript, setCustomScript] = useState('');
   const [isScriptEdited, setIsScriptEdited] = useState(false);
   const [droppedEvents, setDroppedEvents] = useState([]);
+  const [gaps, setGaps] = useState([]);
   
   // ── modals ───────────────────────────────────────────
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [customCodeInput, setCustomCodeInput] = useState('');
+  // Set when the code modal was opened to fill a particular gap rather than to
+  // append a step at the end.
+  const [repairTarget, setRepairTarget] = useState(null);
+  // Bumped whenever something changes the recording behind the panel's back, so
+  // the preview is fetched again.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   // ── library ────────────────────────────────────────
   const [tests, setTests]       = useState([]);
@@ -66,6 +74,10 @@ export default function App() {
 
   // ── helpers ────────────────────────────────────────
   const isStep = (a) => a.kind !== 'launch';
+  // Gaps nobody has filled yet. The badge on the Live Script tab is the only
+  // thing that tells the operator to go and look, since they spent the session
+  // watching the application rather than this panel.
+  const openGaps = gaps.filter(gap => !gap.repaired).length;
   const updateStatus = useCallback((msg) => setStatusMsg(msg), []);
 
   // ── connect to agent ───────────────────────────────
@@ -214,7 +226,9 @@ export default function App() {
       const scriptToSave = isScriptEdited ? customScript : null;
       const res = await api.artifacts(agentUrl, sessionId, scriptToSave, token);
       const fileCount = Object.keys(res.files || {}).length;
-      updateStatus(`Downloaded ${fileCount} file(s) to ${res.directory || 'session directory'}`);
+      // Written on the agent, beside the application. Nothing is downloaded:
+      // the browser never sees these files.
+      updateStatus(`Wrote ${fileCount} file(s) on ${agentHost || 'the agent'}: ${res.directory || 'session directory'}`);
     } catch (e) {
       updateStatus(`Could not save: ${e.message}`);
     } finally {
@@ -271,21 +285,45 @@ export default function App() {
     }
   };
 
+  // A command answers with the envelope {protocol, state, summary}. It has no
+  // "status" field: a failure arrives as a non-2xx, which api.js raises.
   const insertCustomCode = async () => {
     if (!sessionId || !customCodeInput.trim()) {
       setShowCodeModal(false);
       return;
     }
     try {
-      const res = await api.command(agentUrl, sessionId, 'custom_code', { code: customCodeInput });
-      if (res && res.status === 'ok') {
-        setShowCodeModal(false);
-        setCustomCodeInput('');
+      if (repairTarget !== null) {
+        await repairGap(repairTarget, customCodeInput.trim());
       } else {
-        updateStatus("Failed to insert custom code.");
+        await api.command(agentUrl, sessionId, 'custom_code', { code: customCodeInput }, token);
+        updateStatus('Step inserted');
       }
+      setShowCodeModal(false);
+      setCustomCodeInput('');
+      setRepairTarget(null);
+      setRefreshTick(tick => tick + 1);
     } catch (e) {
-      updateStatus(`Custom code error: ${e.message}`);
+      updateStatus(`Could not insert that step: ${e.message}`);
+    }
+  };
+
+  // Filling a gap goes to the recording, not to the text in the pane. Keep
+  // regenerates every artifact from the recording before it verifies, so a fix
+  // that lived only in the editor would be thrown away by keeping it.
+  const repairGap = async (index, code) => {
+    if (!sessionId) return;
+    try {
+      setBusy(true);
+      await api.command(agentUrl, sessionId, 'repair_drop', { index, code }, token);
+      setIsScriptEdited(false);          // the recording is the truth again
+      setCustomScript('');
+      setRefreshTick(tick => tick + 1);
+      updateStatus('Gap filled — the step is in the recording now');
+    } catch (e) {
+      updateStatus(`Could not fill that gap: ${e.message}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -393,9 +431,10 @@ export default function App() {
       .then(res => {
         setScriptText(res.script || '');
         setDroppedEvents(res.failures || []);
+        setGaps(res.gaps || []);
       })
       .catch(e => console.error("Preview failed:", e));
-  }, [actions, sessionId, agentUrl, token]);
+  }, [actions, sessionId, agentUrl, token, refreshTick]);
 
   return (
     <div className="app-shell">
@@ -419,7 +458,7 @@ export default function App() {
           <Toolbar 
             state={state} busy={busy}
             onRecord={startRecording} onPause={togglePause} onStop={stopRecording}
-            onCheckpoint={armCheckpoint} onInsertCode={() => setShowCodeModal(true)} onUndo={undoLast} 
+            onCheckpoint={armCheckpoint} onInsertCode={() => { setRepairTarget(null); setCustomCodeInput(''); setShowCodeModal(true); }} onUndo={undoLast} 
             onSave={saveSession} onKeep={() => setShowKeepModal(true)} onReplay={replaySession} 
           />
 
@@ -470,6 +509,7 @@ export default function App() {
                   <button className={`tab-btn ${rightTab === 'script' ? 'active' : ''}`}
                           onClick={() => setRightTab('script')}>
                     Live Script
+                    {openGaps > 0 && <span className="badge badge-muted" style={{marginLeft: 6, color: 'var(--color-unresolved)'}}>{openGaps}</span>}
                   </button>
                   <button className={`tab-btn ${rightTab === 'json' ? 'active' : ''}`}
                           onClick={() => setRightTab('json')}>
@@ -493,20 +533,20 @@ export default function App() {
                    </pre>
                 </div>
 
-                <div className={`tab-content ${rightTab === 'script' ? 'active' : ''}`} style={{ display: rightTab === 'script' ? 'flex' : 'none', flex: 1, flexDirection: 'column' }}>
-                  <textarea 
-                    value={isScriptEdited ? customScript : scriptText} 
-                    onChange={e => {
-                       setCustomScript(e.target.value);
-                       setIsScriptEdited(true);
-                    }}
+                <div className={`tab-content ${rightTab === 'script' ? 'active' : ''}`} style={{ display: rightTab === 'script' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+                  <LiveScriptEditor
+                    script={isScriptEdited ? customScript : scriptText}
                     readOnly={recording}
-                    spellCheck="false"
-                    style={{
-                      flex: 1, padding: 16, fontFamily: "'JetBrains Mono', monospace", 
-                      backgroundColor: 'transparent', color: 'var(--text-primary)', 
-                      border: 'none', resize: 'none', outline: 'none', fontSize: 12, lineHeight: 1.6,
-                      whiteSpace: 'pre'
+                    busy={busy}
+                    onRepair={repairGap}
+                    onWriteCode={(drop) => {
+                      setRepairTarget(drop.index);
+                      setCustomCodeInput('');
+                      setShowCodeModal(true);
+                    }}
+                    onChange={(newScript) => {
+                      setCustomScript(newScript);
+                      setIsScriptEdited(true);
                     }}
                   />
                   {recording && <div style={{padding: '8px 16px', background: 'var(--bg-surface)', color: 'var(--color-weak)', fontSize: '11px', borderTop: '1px solid var(--border-subtle)'}}>Script is Read-Only while recording. Stop recording to edit manually before saving.</div>}
@@ -569,10 +609,14 @@ export default function App() {
       )}
       {/* Code Modal */}
       {showCodeModal && (
-        <div className="modal-overlay" onClick={() => setShowCodeModal(false)}>
+        <div className="modal-overlay" onClick={() => { setShowCodeModal(false); setRepairTarget(null); }}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{minWidth: 600}}>
-            <h2>Insert Custom Python Snippet</h2>
-            <p>This code will be injected directly into the recording timeline and will survive reloading.</p>
+            <h2>{repairTarget !== null ? 'Fill this gap' : 'Insert a step'}</h2>
+            <p>
+              {repairTarget !== null
+                ? 'This goes into the recording where the dropped event was, so every generated file gets it — not just the script in this pane.'
+                : 'This is appended to the recording as a step of its own. It survives Save and Keep, because everything is generated from the recording.'}
+            </p>
             <div className="modal-form">
               <label>Python Code</label>
               <textarea 
@@ -589,8 +633,10 @@ export default function App() {
               />
             </div>
             <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setShowCodeModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={insertCustomCode} disabled={!customCodeInput.trim()}>Insert Step</button>
+              <button className="btn btn-ghost" onClick={() => { setShowCodeModal(false); setRepairTarget(null); }}>Cancel</button>
+              <button className="btn btn-primary" onClick={insertCustomCode} disabled={!customCodeInput.trim()}>
+                {repairTarget !== null ? 'Fill the gap' : 'Insert step'}
+              </button>
             </div>
           </div>
         </div>

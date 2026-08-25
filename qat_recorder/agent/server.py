@@ -254,6 +254,9 @@ class Agent:
                     controller.stop()
                 elif action is Command.CUSTOM_CODE:
                     controller.inject_custom_code(args.get("code", ""))
+                elif action is Command.REPAIR_DROP:
+                    controller.repair_drop(int(args.get("index", -1)),
+                                           args.get("code", ""))
             except Exception as error:                        # noqa: BLE001
                 raise AgentError(str(error), 409)
             return {"state": controller.state.value,
@@ -267,8 +270,12 @@ class Agent:
             recording = session.controller.recording
             if recording is None:
                 raise AgentError("nothing recorded", 409)
+            # Validated whether or not the script was hand-edited. A custom
+            # script replaces one file; the feature file, the step definitions
+            # and the object map are still generated from the recording, and an
+            # incoherent recording cannot produce them.
             problems = recording.validate()
-            if problems and not custom_script:
+            if problems:
                 raise AgentError("recording is not valid: " + "; ".join(problems),
                                  409)
             from qat_recorder.emit.python import emit_object_map
@@ -311,7 +318,8 @@ class Agent:
         with session.lock:
             recording = session.controller.recording
             if recording is None:
-                return {"script": "", "dropped": "", "failures": []}
+                return {"script": "", "dropped": "", "failures": [],
+                        "gaps": [], "open_gaps": 0}
             
             try:
                 script = emit_python(recording)
@@ -325,11 +333,20 @@ class Agent:
                 from qat_recorder.capture import dropped_report
                 failures_list = list(capture.failures)
                 dropped = dropped_report(capture.failures)
-                
+
+            # Every gap, with the position it happened at and whether it has
+            # been filled. The panel renders these; it does not have to read
+            # them back out of the generated Python, though the markers are
+            # there too so the script stands on its own.
+            gaps = [dict(drop.to_dict(), index=index)
+                    for index, drop in enumerate(recording.drops)]
+
             return {
                 "script": script,
                 "dropped": dropped,
-                "failures": failures_list
+                "failures": failures_list,
+                "gaps": gaps,
+                "open_gaps": len([one for one in gaps if not one["repaired"]]),
             }
 
     # -- the library -------------------------------------------------------
