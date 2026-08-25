@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * The generated script, with the gaps shown where they happened.
@@ -218,6 +218,38 @@ export default function LiveScriptEditor({ script, onChange, onRepair, onPoint, 
   const open = segments.filter(part => part.type === 'dropped').length;
   let numbered = 0;
 
+  // Where the operator scrolled to. While recording, the script is re-fetched
+  // every time a step is added, and every one of those re-renders would
+  // otherwise put them back at the top -- which is the one place the gap they
+  // were reaching for is not.
+  const scroller = useRef(null);
+  const wanted = useRef(0);
+
+  const remember = () => {
+    if (scroller.current) wanted.current = scroller.current.scrollTop;
+  };
+
+  // After the blocks have re-measured themselves (child layout effects run
+  // first), put the view back where it was.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (element && Math.abs(element.scrollTop - wanted.current) > 1) {
+      element.scrollTop = wanted.current;
+    }
+  });
+
+  const goToFirstGap = () => {
+    const pane = scroller.current;
+    const first = document.getElementById('drop-gap-0');
+    if (!pane || !first) return;
+    // Measured between the two rectangles rather than from offsetTop, which is
+    // relative to the nearest *positioned* ancestor -- and the pane is not one.
+    const offset = first.getBoundingClientRect().top
+                 - pane.getBoundingClientRect().top;
+    pane.scrollTop += offset - (pane.clientHeight - first.offsetHeight) / 2;
+    remember();
+  };
+
   return (
     <div className="script-editor">
       {open > 0 && (
@@ -226,35 +258,21 @@ export default function LiveScriptEditor({ script, onChange, onRepair, onPoint, 
             {open} event{open === 1 ? '' : 's'} could not be recorded. The script
             does not do {open === 1 ? 'it' : 'them'}.
           </span>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => {
-              const first = document.getElementById('drop-gap-0');
-              if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }}
-          >
+          <button className="btn btn-secondary btn-sm" onClick={goToFirstGap}>
             Go to the first
           </button>
         </div>
       )}
 
-      <div className="script-editor-scroll">
+      <div className="script-editor-scroll" ref={scroller} onScroll={remember}>
         {segments.map((part, index) => {
           if (part.type === 'text') {
             return (
-              <textarea
+              <ScriptBlock
                 key={index}
-                value={part.content}
+                content={part.content}
                 readOnly={readOnly}
-                onChange={event => handleTextChange(index, event.target.value)}
-                ref={element => {
-                  if (element) {
-                    element.style.height = 'auto';
-                    element.style.height = `${element.scrollHeight}px`;
-                  }
-                }}
-                spellCheck="false"
-                className="script-editor-text"
+                onChange={value => handleTextChange(index, value)}
               />
             );
           }
@@ -276,5 +294,39 @@ export default function LiveScriptEditor({ script, onChange, onRepair, onPoint, 
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * A run of script between two gaps.
+ *
+ * While the recording is running this is read-only, and a <pre> sizes itself
+ * from its content with nothing to measure. A textarea does not: it has to be
+ * collapsed to `auto` and re-measured, and collapsing it shrinks the scroll
+ * container, which makes the browser clamp scrollTop -- so every refresh threw
+ * the operator back to the top of the script. Only the editable case pays that,
+ * and only when its text actually changes.
+ */
+function ScriptBlock({ content, readOnly, onChange }) {
+  const box = useRef(null);
+
+  useLayoutEffect(() => {
+    const element = box.current;
+    if (!element || readOnly) return;
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  }, [content, readOnly]);
+
+  if (readOnly) {
+    return <pre className="script-editor-text">{content}</pre>;
+  }
+  return (
+    <textarea
+      ref={box}
+      className="script-editor-text"
+      value={content}
+      spellCheck="false"
+      onChange={event => onChange(event.target.value)}
+    />
   );
 }

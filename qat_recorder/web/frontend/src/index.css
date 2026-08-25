@@ -906,8 +906,11 @@ body {
   overflow: auto;
 }
 
+/* A <pre> while recording, a <textarea> once it is editable. They must look and
+   measure identically, or the pane would jump when the recording stops. */
 .script-editor-text {
   width: 100%;
+  margin: 0;
   /* Its height is measured from its content, so it must not be shrunk to fit
      the pane: a flex item shrinks before its container overflows, and a
      container that never overflows never scrolls. */
