@@ -208,6 +208,17 @@ class Drop:
     #: Index into `actions`: this many steps had been recorded before the drop.
     after: int = 0
     t: float = 0.0
+    #: How many objects the reported definition matched when the event was lost.
+    #: 0 or many is the usual answer -- it is generally *why* it was lost -- and
+    #: it is the difference between a fix that can be offered and one that
+    #: cannot. -1 means nobody looked.
+    matched: int = -1
+    #: A Target, resolved against the running application at the moment of the
+    #: drop, when the reported definition turned out to identify exactly one
+    #: object. Empty otherwise. This is what makes a one-click fix honest after
+    #: the session has ended and the application is gone: it was checked when it
+    #: could be checked.
+    suggestion: dict = field(default_factory=dict)
     #: Set once the operator has filled the gap. A repaired drop is history: it
     #: is kept so the recording still says what was lost, and emits nothing.
     repaired: bool = False
@@ -220,6 +231,8 @@ class Drop:
             "seen": dict(self.seen),
             "after": self.after,
             "t": round(self.t, 4),
+            "matched": self.matched,
+            "suggestion": dict(self.suggestion),
             "repaired": self.repaired,
         }
 
@@ -232,6 +245,8 @@ class Drop:
             seen=dict(data.get("seen", {})),
             after=int(data.get("after", 0)),
             t=float(data.get("t", 0.0)),
+            matched=int(data.get("matched", -1)),
+            suggestion=dict(data.get("suggestion", {})),
             repaired=bool(data.get("repaired", False)),
         )
 

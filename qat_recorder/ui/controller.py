@@ -246,6 +246,53 @@ class RecorderController:
             Action(ActionKind.CUSTOM_CODE, args={"code": code}))
         self._emit_new_actions(before)
 
+    def repair_suggestion(self, index: int, text: str = "") -> dict:
+        """Fill the gap with the object that was checked when it happened.
+
+        Only available where `Drop.suggestion` is set, which is only where the
+        reported definition identified exactly one object at the moment the
+        event was lost. Everywhere else the panel is told the count instead and
+        offers pointing, because a definition that matches fourteen check boxes
+        is not a fix -- it is a script that fails on its first run.
+        """
+        if self._state not in self._EDITABLE:
+            raise ControllerError(f"cannot fill a gap while {self._state.value}")
+        recording = self.recording
+        if recording is None or not 0 <= index < len(recording.drops):
+            raise ControllerError(f"no gap at {index}")
+
+        from qat_recorder.ir import Target                   # noqa: PLC0415
+
+        drop = recording.drops[index]
+        if not drop.suggestion:
+            raise ControllerError(
+                f"nothing here was checked against the application: the object "
+                f"matched {drop.matched} things when the event was lost. Point "
+                f"at it while the application is running, or write the step.")
+
+        target = Target.from_dict(drop.suggestion)
+        kind = self._REPAIR_KINDS.get(drop.kind, ActionKind.CLICK)
+        args = {}
+        if drop.kind == "key_press":
+            # The filter never transmits characters, so the operator supplies
+            # them; the object itself was checked when the event was lost.
+            if not text:
+                raise ControllerError(
+                    "say what was typed -- the recorder never saw the characters")
+            kind, args = ActionKind.TYPE, {"text": text}
+        try:
+            recording.repair(index, Action(
+                kind, target=target, args=args,
+                t=recording.actions[-1].t if recording.actions else 0.0,
+                note=f"fills the gap left by {drop.label}"))
+        except (IndexError, ValueError) as error:
+            raise ControllerError(str(error)) from error
+
+        self._report(f"filled the gap with {kind.value} on "
+                     f"{target.label or 'that object'} "
+                     f"({target.robustness.value})")
+        return {"index": index, "open": len(recording.open_drops())}
+
     def repair_drop(self, index: int, code: str) -> dict:
         """Fill the gap at `index` with a step, where the gap is.
 

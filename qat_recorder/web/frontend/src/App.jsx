@@ -332,6 +332,26 @@ export default function App() {
     }
   };
 
+  // The one-click fix. It inserts the object the recorder identified and
+  // checked at the moment the event was lost -- never a definition assembled
+  // here out of what the filter happened to report, which is how six unnamed
+  // check boxes became six copies of a step that matched all of them.
+  const applyFix = async (index, text) => {
+    if (!sessionId) return;
+    try {
+      setBusy(true);
+      await api.command(agentUrl, sessionId, 'repair_suggestion', { index, text }, token);
+      setIsScriptEdited(false);          // the recording is the truth again
+      setCustomScript('');
+      setRefreshTick(tick => tick + 1);
+      updateStatus('Gap filled — the step is in the recording now');
+    } catch (e) {
+      updateStatus(`Could not fill that gap: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Filling a gap goes to the recording, not to the text in the pane. Keep
   // regenerates every artifact from the recording before it verifies, so a fix
   // that lived only in the editor would be thrown away by keeping it.
@@ -567,7 +587,7 @@ export default function App() {
                     onPoint={pointAtGap}
                     onCancelPoint={() => sendCommand('cancel_checkpoint')
                       .then(() => updateStatus('Stopped waiting for a click'))}
-                    onRepair={repairGap}
+                    onApply={applyFix}
                     onWriteCode={(drop) => {
                       setRepairTarget(drop.index);
                       setCustomCodeInput('');

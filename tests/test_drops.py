@@ -364,3 +364,78 @@ def test_a_checkpoint_pick_is_still_a_checkpoint(controller):  # noqa: F811
     _point_at(controller, "QPushButton", "loginButton")
     assert controller._test["picked"], "the checkpoint modal was never offered"
     assert controller.recording.open_drops() != []
+
+
+# --- a fix that was never checked is not a fix -----------------------------
+
+def test_a_gap_on_an_ambiguous_object_offers_no_one_click_fix():
+    """The failure this whole check exists to prevent.
+
+    Six check boxes in a preferences dialog, none of them named, all of them
+    QCheckBox. A definition built from what the filter reported looks like a
+    locator and identifies all six, so the generated script died on its first
+    run with "Multiple objects found that match this definition". The recorder
+    asks the application at the moment of the drop, and declines to offer a fix
+    it cannot stand behind.
+    """
+    from tests.test_capture import event
+
+    backend, _ = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    # Two identical unnamed "Apply" buttons -- the same shape as the check boxes.
+    capture.feed_all(click_pair(200, "QPushButton", text="Apply"))
+    recording = capture.finish()
+
+    drop, = recording.drops
+    assert drop.matched == 2
+    assert drop.suggestion == {}
+
+
+def test_a_gap_on_one_findable_object_carries_a_checked_fix():
+    """The other half: where it is unambiguous, the fix is real.
+
+    Resolved through the resolver, so it carries every way of addressing the
+    object -- not the single property the filter happened to report.
+    """
+    backend, nodes = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed_all(click_pair(200, "QPushButton", "loginButton"))
+    # Nothing was dropped, so make the same check directly.
+    matched, suggestion = capture._check_now(
+        {"class": "QPushButton", "objectName": "loginButton"})
+    assert matched == 1
+    assert suggestion["definition"]["objectName"] == "loginButton"
+    assert suggestion["robustness"] != "unresolved"
+    assert suggestion["alternatives"], "the checked fix carries the runners-up too"
+
+
+def test_filling_from_an_unchecked_gap_is_refused(controller):   # noqa: F811
+    """It has to fail here, in the panel, and not later in a test run."""
+    from tests.test_capture import event
+
+    controller.start()
+    controller._test["receiver"].push(*click_pair(200, "QPushButton", text="Apply"))
+    controller.poll()
+    assert controller.recording.drops[0].matched == 2
+
+    with pytest.raises(ControllerError) as raised:
+        controller.repair_suggestion(0)
+    assert "matched 2" in str(raised.value)
+    assert controller.recording.open_drops(), "the gap is still open"
+
+
+def test_filling_from_a_checked_gap_inserts_a_real_step(controller):  # noqa: F811
+    _record_a_gap(controller)
+    drop = controller.recording.drops[0]
+    # Stand in for the case where the reported definition did identify one
+    # object when the event was lost.
+    backend = controller.session.backend
+    drop.matched = 1
+    drop.suggestion = controller.session.resolver.resolve(
+        backend.find_all({"objectName": "loginButton"})[0]).to_dict()
+
+    controller.repair_suggestion(0)
+    filled = controller.recording.actions[-1]
+    assert filled.kind is ActionKind.CLICK
+    assert filled.target.definition["objectName"] == "loginButton"
+    assert controller.recording.open_drops() == []

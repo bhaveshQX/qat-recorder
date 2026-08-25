@@ -1327,17 +1327,21 @@ class CaptureSession:
         can does -- and one interaction the operator cannot see the result of
         should be one gap they are asked about, not two identical ones.
         """
+        seen = {key: value for key, value in (
+            ("class", event.target.cls),
+            ("objectName", event.target.object_name),
+            ("text", event.target.text),
+        ) if value}
+        matched, suggestion = self._check_now(seen)
         drop = Drop(
             reason=why,
             kind=event.kind,
             label=label,
-            seen={key: value for key, value in (
-                ("class", event.target.cls),
-                ("objectName", event.target.object_name),
-                ("text", event.target.text),
-            ) if value},
+            seen=seen,
             after=len(self.recording.actions),
             t=self._elapsed(event.t),
+            matched=matched,
+            suggestion=suggestion,
         )
         if self.recording.drops:
             previous = self.recording.drops[-1]
@@ -1347,6 +1351,47 @@ class CaptureSession:
             if same_gap and abs(drop.t - previous.t) <= _SAME_INTERACTION_S:
                 return
         self.recording.add_drop(drop)
+
+    def _check_now(self, seen: dict):
+        """Ask the application, while it is still there, what `seen` matches.
+
+        The event was dropped, so this usually answers "nothing" or "fourteen
+        things" -- and that answer is the whole point. It is what lets the panel
+        offer a one-click fix only when there is one object to fix it with, and
+        say the count instead when there is not.
+
+        A definition assembled from what the filter reported is not a locator.
+        `{'type': 'QCheckBox'}` looks like one and identifies every check box in
+        the dialog; offering it produced scripts that failed on the first run
+        with "Multiple objects found that match this definition". Checking costs
+        one lookup at a moment when something has already gone wrong.
+        """
+        definition = {}
+        if seen.get("class"):
+            definition["type"] = seen["class"]
+        if seen.get("objectName"):
+            definition["objectName"] = seen["objectName"]
+        if seen.get("text"):
+            definition["text"] = seen["text"]
+        if not definition:
+            return 0, {}
+
+        try:
+            found = list(self.backend.find_all(definition))
+        except Exception:                                    # noqa: BLE001
+            return -1, {}
+        if len(found) != 1:
+            return len(found), {}
+
+        # Exactly one. Resolve it properly, so the fix carries every way of
+        # addressing it rather than the one the filter happened to report.
+        try:
+            target = self.resolver.resolve(found[0])
+        except Exception:                                    # noqa: BLE001
+            return 1, {}
+        if target.robustness is Robustness.UNRESOLVED:
+            return 1, {}
+        return 1, target.to_dict()
 
     def _target_for_node(self, node) -> Target:
         return self.resolver.resolve(node)

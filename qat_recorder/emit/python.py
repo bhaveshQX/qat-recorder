@@ -369,6 +369,10 @@ def _drop_marker(index: int, drop) -> str:
         "reason": drop.reason,
         "label": drop.label,
         "seen": drop.seen,
+        # Whether a fix can be offered at all, and if not, the count that says
+        # why. A definition matching fourteen check boxes is not a locator.
+        "checked": bool(drop.suggestion),
+        "matched": drop.matched,
     }, ensure_ascii=False)
 
 

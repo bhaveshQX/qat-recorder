@@ -34,60 +34,53 @@ function definitionFrom(seen) {
   return def;
 }
 
-const UNVALIDATED = '  # filled by hand: this locator was never validated';
-
-function fixesFor(data) {
-  const def = definitionFrom(data.seen);
-  const rendered = JSON.stringify(def);
-  const named = Object.keys(def).length > 0;
-
-  if (CLICK_KINDS.includes(data.kind)) {
-    const fixes = [];
-    if (named) {
-      fixes.push({
-        label: 'Click it',
-        hint: 'do what the click would have done',
-        code: `qat.mouse_click(${rendered})${UNVALIDATED}`,
-      });
-      if (data.kind === 'mouse_double') {
-        fixes.push({
-          label: 'Double-click it',
-          hint: 'the interaction was a double-click',
-          code: `qat.double_click(${rendered})${UNVALIDATED}`,
-        });
-      }
-    }
-    return fixes;
-  }
-
-  if (data.kind === 'close_window') {
-    // `close` is a slot on every QWidget, and what the window manager's X asks
-    // the application to do. Not close_application: that ends the session.
-    return named ? [{
-      label: 'Close that window',
-      hint: 'close() is the slot the title-bar X calls',
-      code: `qat.wait_for_object(${rendered}).close()${UNVALIDATED}`,
-    }] : [];
-  }
-
+/**
+ * Whether a one-click fix can be offered, and what it does.
+ *
+ * Only where `checked` is set -- meaning the object the filter reported turned
+ * out to identify exactly one thing when the event was lost, and the recorder
+ * resolved it properly there and then. Everywhere else the honest answer is the
+ * count: `{"type": "QCheckBox"}` looks like a locator and matches every check
+ * box in a preferences dialog, and offering it produced scripts that failed on
+ * their first run with "Multiple objects found that match this definition".
+ */
+function fixFor(data) {
+  if (!data.checked) return null;
   if (data.kind === 'key_press') {
-    // The filter never transmits characters, so nobody here knows what was
-    // typed. The operator does.
-    return named ? [{
-      label: 'Type into it',
-      hint: 'the recorder never saw the characters -- say what they were',
-      needsText: true,
-      code: (text) => `qat.type_in(${rendered}, ${JSON.stringify(text)})${UNVALIDATED}`,
-    }] : [];
+    return { label: 'Type into it', needsText: true,
+             hint: 'the recorder never saw the characters — say what they were' };
   }
-
-  return [];
+  if (data.kind === 'close_window') {
+    return { label: 'Close that window',
+             hint: 'close() is the slot the title-bar X calls' };
+  }
+  if (CLICK_KINDS.includes(data.kind)) {
+    return { label: data.kind === 'mouse_double' ? 'Double-click it' : 'Click it',
+             hint: 'the object was identified when the event was lost' };
+  }
+  return null;
 }
 
-function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy }) {
+/** Why there is no one-click fix, in the operator's terms. */
+function whyNoFix(data) {
+  if (data.checked) return '';
+  if (data.matched > 1) {
+    return `Nothing here identifies one object: what the recorder saw matched `
+         + `${data.matched} of them when this happened. Point at it instead.`;
+  }
+  if (data.matched === 0) {
+    return 'Nothing in the application matched what the recorder saw, which is '
+         + 'why the event was lost. Point at it instead.';
+  }
+  return 'The object could not be checked against the application. Point at it '
+       + 'instead.';
+}
+
+function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy }) {
   const [typed, setTyped] = useState('');
-  const fixes = fixesFor(data);
+  const fix = fixFor(data);
   const def = definitionFrom(data.seen);
+  const why = whyNoFix(data);
 
   return (
     <div className="drop-gap">
@@ -99,14 +92,17 @@ function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCod
         {Object.keys(def).length > 0 && (
           <div className="drop-gap-seen">{JSON.stringify(def)}</div>
         )}
-        {canPoint && (
+        {picking ? (
+          <div className="drop-gap-note">Waiting — click that control in the application.</div>
+        ) : why ? (
+          <div className="drop-gap-note">{why}</div>
+        ) : canPoint ? (
           <div className="drop-gap-note">
-            {picking
-              ? 'Waiting — click that control in the application.'
-              : 'Point at it and the recorder identifies it the way it identifies every other step. Nothing to write, and the locator is checked against the running application.'}
+            Or point at it, and the recorder identifies it the way it identifies
+            every other step.
           </div>
-        )}
-        {fixes.some(fix => fix.needsText) && (
+        ) : null}
+        {fix && fix.needsText && (
           <input
             className="drop-gap-input"
             value={typed}
@@ -118,9 +114,16 @@ function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCod
       </div>
 
       <div className="drop-gap-actions">
-        {/* First, because it is the only fix that produces a locator anyone
-            checked. The rest are assembled from what the filter reported about
-            an object it could not find. */}
+        {fix && (
+          <button
+            className="btn btn-primary btn-sm"
+            title={fix.hint}
+            disabled={busy || picking || (fix.needsText && !typed.trim())}
+            onClick={() => onApply(data.index, fix.needsText ? typed : '')}
+          >
+            {fix.label}
+          </button>
+        )}
         {canPoint && (
           picking ? (
             // Armed. The operator may have changed their mind, and without this
@@ -134,7 +137,7 @@ function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCod
             </button>
           ) : (
             <button
-              className="btn btn-primary btn-sm"
+              className={fix ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
               title="click the control in the application and the recorder works out how to address it"
               disabled={busy}
               onClick={() => onPoint(data.index)}
@@ -143,19 +146,6 @@ function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCod
             </button>
           )
         )}
-        {fixes.map(fix => (
-          <button
-            key={fix.label}
-            className={canPoint ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
-            title={`${fix.hint} — this locator is not checked against the application`}
-            disabled={busy || picking || (fix.needsText && !typed.trim())}
-            onClick={() => onRepair(
-              data.index,
-              typeof fix.code === 'function' ? fix.code(typed) : fix.code)}
-          >
-            {fix.label}
-          </button>
-        ))}
         <button
           className="btn btn-ghost btn-sm"
           disabled={busy || picking}
@@ -169,7 +159,7 @@ function DroppedEventWidget({ data, onRepair, onPoint, onCancelPoint, onWriteCod
   );
 }
 
-export default function LiveScriptEditor({ script, onChange, onRepair, onPoint, onCancelPoint, onWriteCode, canPoint, picking, readOnly, busy }) {
+export default function LiveScriptEditor({ script, onChange, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, readOnly, busy }) {
   // Derived during render, not held in state. The script prop is the single
   // source of truth: an edit goes up through onChange and comes back down as
   // new text, so keeping a parsed copy in state only added a second render per
@@ -286,7 +276,7 @@ export default function LiveScriptEditor({ script, onChange, onRepair, onPoint, 
                 picking={picking}
                 onPoint={onPoint}
                 onCancelPoint={onCancelPoint}
-                onRepair={onRepair}
+                onApply={onApply}
                 onWriteCode={onWriteCode}
               />
             </div>
