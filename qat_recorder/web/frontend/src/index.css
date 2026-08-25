@@ -1079,3 +1079,14 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
+
+.media-loading, .media-failed {
+  padding: 10px 12px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+}
+
+.media-failed { color: var(--color-unresolved); }
+
+.drop-gap-shot img, .screen-strip img { width: 100%; height: auto; display: block; }

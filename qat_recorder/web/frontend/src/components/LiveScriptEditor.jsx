@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import MediaImage from './MediaImage';
 
 /**
  * The generated script, with the gaps shown where they happened.
@@ -84,7 +85,7 @@ const GRADE_COLOUR = {
   fragile: 'var(--color-fragile)',
 };
 
-function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy, shotUrl }) {
+function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy, shot }) {
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
   const def = definitionFrom(data.seen);
@@ -119,11 +120,11 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
             every other step.
           </div>
         ) : null}
-        {shotUrl && (
-          <a className="drop-gap-shot" href={shotUrl} target="_blank" rel="noreferrer"
-             title="what was on screen when this event was lost — click to open full size">
-            <img src={shotUrl} alt="the screen when the event was lost" />
-          </a>
+        {shot && (
+          <div className="drop-gap-shot"
+               title="what was on screen when this event was lost">
+            <MediaImage {...shot} alt="the screen when the event was lost" />
+          </div>
         )}
         {fix && fix.needsText && (
           <input
@@ -305,7 +306,7 @@ export default function LiveScriptEditor({ script, onChange, onApply, onPoint, o
                 onPoint={onPoint}
                 onCancelPoint={onCancelPoint}
                 onApply={onApply}
-                shotUrl={shotFor ? shotFor(part.data.index) : ''}
+                shot={shotFor ? shotFor(part.data.index) : null}
                 onWriteCode={onWriteCode}
               />
             </div>

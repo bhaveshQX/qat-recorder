@@ -63,6 +63,24 @@ export function mediaUrl(base, sid, name, token) {
   return `${base}/v1/sessions/${sid}/media/${encodeURIComponent(name)}${auth}`;
 }
 
+/**
+ * A still, fetched with the same headers every other call uses.
+ *
+ * Not an <img src> pointing straight at the agent: an <img> cannot carry a
+ * header, and an ngrok free tunnel answers a header-less browser request with
+ * its interstitial page rather than the file -- so the picture arrives as HTML
+ * and renders as a broken image, with nothing anywhere saying why. Fetched here
+ * and handed to the <img> as a blob, it works on a tunnel, on a LAN address and
+ * on loopback alike.
+ */
+export async function fetchMedia(base, sid, name, token) {
+  const response = await fetch(
+    `${base}/v1/sessions/${sid}/media/${encodeURIComponent(name)}`,
+    { headers: headers(token) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return URL.createObjectURL(await response.blob());
+}
+
 // ── WebSocket for real-time events ──────────────────────────────
 
 export function connectEvents(base, sessionId, token, onMessage, onClose) {

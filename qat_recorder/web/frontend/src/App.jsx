@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api, connectEvents, mediaUrl } from './api';
+import MediaImage from './components/MediaImage';
 import Header from './components/Header';
 import ConnectBar from './components/ConnectBar';
 import SetupBar from './components/SetupBar';
@@ -84,7 +85,7 @@ export default function App() {
   const updateStatus = useCallback((msg) => setStatusMsg(msg), []);
   const shotFor = (index) => {
     const name = media.gap_shots?.[String(index)];
-    return name ? mediaUrl(agentUrl, sessionId, name, token) : '';
+    return name ? { base: agentUrl, sid: sessionId, name, token } : null;
   };
 
   // ── connect to agent ───────────────────────────────
@@ -655,10 +656,10 @@ export default function App() {
                     {media.stills?.length ? (
                       <div className="screen-strip">
                         {media.stills.map(name => (
-                          <a key={name} href={mediaUrl(agentUrl, sessionId, name, token)}
-                             target="_blank" rel="noreferrer" title={name}>
-                            <img src={mediaUrl(agentUrl, sessionId, name, token)} alt={name} />
-                          </a>
+                          <div key={name} title={name}>
+                            <MediaImage base={agentUrl} sid={sessionId}
+                                        name={name} token={token} alt={name} />
+                          </div>
                         ))}
                       </div>
                     ) : (
