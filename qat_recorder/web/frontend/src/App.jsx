@@ -21,6 +21,7 @@ export default function App() {
   const [token, setToken]       = useState('');
   const [connected, setConnected] = useState(false);
   const [agentHost, setAgentHost] = useState('');
+  const [build, setBuild] = useState(null);
 
   // ── session state ──────────────────────────────────
   const [state, setState]         = useState(S.IDLE);
@@ -95,6 +96,13 @@ export default function App() {
       const d = await api.health(cleanUrl, tok);
       setConnected(true);
       setAgentHost(d.host || 'agent');
+      // Which build is actually running over there. A VM on an older wheel than
+      // the panel expects makes every feature look broken at once, and nothing
+      // used to say so.
+      const running = document.querySelector('script[src*="/static/assets/index-"]');
+      const mine = running ? running.getAttribute('src').split('/').pop() : '';
+      setBuild({ agent: d.version || '?', ui: d.ui_build || '',
+                 mismatch: !!(mine && d.ui_build && mine !== d.ui_build) });
       if (d.default_lib) setLibPath(prev => prev || d.default_lib);
       
       updateStatus(`Connected to ${d.host || cleanUrl}`);
@@ -681,6 +689,14 @@ export default function App() {
             </div>
           </div>
         </>
+      )}
+
+      {build?.mismatch && (
+        <div className="build-warning">
+          This panel was served by a different build than the agent is running
+          ({build.ui} on the agent). Reload with a hard refresh; if it persists,
+          the wheel on that machine is older than this UI and needs reinstalling.
+        </div>
       )}
 
       {!connected && (

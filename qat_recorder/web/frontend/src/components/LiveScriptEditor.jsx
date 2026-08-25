@@ -76,6 +76,14 @@ function whyNoFix(data) {
        + 'instead.';
 }
 
+//: The resolver's own vocabulary, in the panel's colours.
+const GRADE_COLOUR = {
+  strong: 'var(--color-strong)',
+  moderate: 'var(--color-moderate)',
+  weak: 'var(--color-weak)',
+  fragile: 'var(--color-fragile)',
+};
+
 function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy, shotUrl }) {
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
@@ -91,6 +99,15 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
         <div className="drop-gap-reason">{data.reason}</div>
         {Object.keys(def).length > 0 && (
           <div className="drop-gap-seen">{JSON.stringify(def)}</div>
+        )}
+        {fix && data.fix_label && (
+          <div className="drop-gap-note">
+            Fills this with <strong>{data.fix_label}</strong>
+            {data.grade === 'fragile' && ' — addressed by its position, so it '
+              + 'will pick the wrong one if the order ever changes'}
+            {data.grade === 'weak' && ' — addressed by its visible text, so it '
+              + 'breaks under translation'}.
+          </div>
         )}
         {picking ? (
           <div className="drop-gap-note">Waiting — click that control in the application.</div>
@@ -128,6 +145,11 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
             onClick={() => onApply(data.index, fix.needsText ? typed : '')}
           >
             {fix.label}
+            {data.grade && data.grade !== 'strong' && (
+              <span style={{ color: GRADE_COLOUR[data.grade] || 'inherit', fontSize: 11 }}>
+                ({data.grade})
+              </span>
+            )}
           </button>
         )}
         {canPoint && (

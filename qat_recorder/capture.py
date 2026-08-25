@@ -1332,7 +1332,7 @@ class CaptureSession:
             ("objectName", event.target.object_name),
             ("text", event.target.text),
         ) if value}
-        matched, suggestion = self._check_now(seen)
+        matched, suggestion = self._check_now(event, seen)
         drop = Drop(
             reason=why,
             kind=event.kind,
@@ -1352,20 +1352,35 @@ class CaptureSession:
                 return
         self.recording.add_drop(drop)
 
-    def _check_now(self, seen: dict):
-        """Ask the application, while it is still there, what `seen` matches.
+    def _check_now(self, event: RawEvent, seen: dict):
+        """Work out, while the application is still there, how this could be fixed.
 
-        The event was dropped, so this usually answers "nothing" or "fourteen
-        things" -- and that answer is the whole point. It is what lets the panel
-        offer a one-click fix only when there is one object to fix it with, and
-        say the count instead when there is not.
+        Two questions, in order, and the order is the whole point.
 
-        A definition assembled from what the filter reported is not a locator.
-        `{'type': 'QCheckBox'}` looks like one and identifies every check box in
-        the dialog; offering it produced scripts that failed on the first run
-        with "Multiple objects found that match this definition". Checking costs
-        one lookup at a moment when something has already gone wrong.
+        **Ask the resolver about the object the event hit.** It has more than the
+        handful of properties the filter reported: the ancestor chain, the index
+        among siblings, and an escalation ladder whose last rung is a positional
+        index. Fourteen unnamed check boxes in a preferences dialog have no
+        distinguishing property between them and are still perfectly addressable
+        as "the third one inside this group" -- FRAGILE, and graded as such, and
+        very much better than nothing. Not asking this was why a whole dialog's
+        worth of gaps offered no fix at all.
+
+        **Only then ask what the reported properties match.** If the resolver
+        cannot place the object, the count is what the panel says instead:
+        `{'type': 'QCheckBox'}` looks like a locator and identifies every check
+        box in the dialog, and offering it produced scripts that failed on their
+        first run with "Multiple objects found that match this definition".
         """
+        try:
+            resolved = self._resolve(event.target)
+        except Exception:                                    # noqa: BLE001
+            resolved = None
+        if resolved is not None:
+            _, target = resolved
+            if target.robustness is not Robustness.UNRESOLVED:
+                return 1, target.to_dict()
+
         definition = {}
         if seen.get("class"):
             definition["type"] = seen["class"]

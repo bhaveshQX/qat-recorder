@@ -388,7 +388,10 @@ def test_a_gap_on_an_ambiguous_object_offers_no_one_click_fix():
 
     drop, = recording.drops
     assert drop.matched == 2
-    assert drop.suggestion == {}
+    assert drop.suggestion == {}, (
+        "the resolver is asked first and can address a sibling by index, but "
+        "only when the filter says which sibling it was. Here it did not, so "
+        "there is nothing to offer and the count is what the panel shows.")
 
 
 def test_a_gap_on_one_findable_object_carries_a_checked_fix():
@@ -397,11 +400,13 @@ def test_a_gap_on_one_findable_object_carries_a_checked_fix():
     Resolved through the resolver, so it carries every way of addressing the
     object -- not the single property the filter happened to report.
     """
+    from tests.test_capture import event
+
     backend, nodes = build_tree()
     capture = CaptureSession(backend, app_name="sample")
-    capture.feed_all(click_pair(200, "QPushButton", "loginButton"))
-    # Nothing was dropped, so make the same check directly.
+    # Nothing was dropped here, so make the same check directly.
     matched, suggestion = capture._check_now(
+        event("mouse_press", 200, "QPushButton", "loginButton"),
         {"class": "QPushButton", "objectName": "loginButton"})
     assert matched == 1
     assert suggestion["definition"]["objectName"] == "loginButton"
@@ -439,3 +444,26 @@ def test_filling_from_a_checked_gap_inserts_a_real_step(controller):  # noqa: F8
     assert filled.kind is ActionKind.CLICK
     assert filled.target.definition["objectName"] == "loginButton"
     assert controller.recording.open_drops() == []
+
+
+def test_the_resolver_is_asked_before_the_reported_properties():
+    """Fourteen unnamed check boxes have no distinguishing property and are
+    still addressable as "the third one inside this group".
+
+    The resolver's last rung is a positional index. Asking only what the
+    filter's properties matched never reached it, so a whole dialog's worth of
+    gaps offered no fix at all.
+    """
+    from tests.test_capture import event
+
+    backend, nodes = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    # The filter says which of the two identical buttons was hit.
+    matched, suggestion = capture._check_now(
+        event("mouse_press", 200, "QPushButton", text="Apply", index=1,
+              path=(("QGroupBox", "duplicateGroup"),)),
+        {"class": "QPushButton", "text": "Apply"})
+
+    assert suggestion, "the resolver can place this and was not asked"
+    assert suggestion["robustness"] == "fragile", "and it says what that is worth"
+    assert suggestion["index"] == 1

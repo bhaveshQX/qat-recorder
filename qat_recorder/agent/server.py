@@ -138,10 +138,18 @@ class Agent:
     def health(self) -> dict:
         with self.lock:
             busy = self.session.describe() if self.session else None
+        # The version of the package on *this* machine, and the name of the UI
+        # bundle it serves. Both are shown in the panel, because the commonest
+        # way for everything to look broken at once is a VM running an older
+        # wheel than the one the panel expects -- and until now nothing said so.
+        from qat_recorder import __version__               # noqa: PLC0415
+
         return {
             "agent": "qat-recorder-agent",
             "host": self.host_name,
             "protocol": PROTOCOL_VERSION,
+            "version": __version__,
+            "ui_build": _ui_build(),
             "session": busy,
         }
 
@@ -478,6 +486,22 @@ class Agent:
             if self.session is not None:
                 self.session.shutdown()
                 self.session = None
+
+
+def _ui_build() -> str:
+    """The hashed name of the JS bundle this agent serves, or "" if none.
+
+    Vite renames the bundle whenever its contents change, so this is a build
+    identity that needs no build step of its own to maintain.
+    """
+    from pathlib import Path as _Path                       # noqa: PLC0415
+
+    static = _Path(__file__).resolve().parents[1] / "web" / "static" / "assets"
+    try:
+        newest = sorted(static.glob("index-*.js"))
+    except OSError:
+        return ""
+    return newest[-1].name if newest else ""
 
 
 def _host_name() -> str:

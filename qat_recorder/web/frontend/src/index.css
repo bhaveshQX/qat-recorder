@@ -1067,3 +1067,15 @@ body {
   text-transform: uppercase;
   color: var(--text-secondary);
 }
+
+/* Said where it cannot be missed: the panel and the agent are different builds,
+   which makes every feature look broken at once and used to be invisible. */
+.build-warning {
+  flex-shrink: 0;
+  padding: 10px 20px;
+  background: rgba(255, 123, 123, 0.12);
+  border-bottom: 1px solid var(--color-unresolved);
+  color: var(--color-unresolved);
+  font-size: 12px;
+  line-height: 1.5;
+}

@@ -373,6 +373,11 @@ def _drop_marker(index: int, drop) -> str:
         # why. A definition matching fourteen check boxes is not a locator.
         "checked": bool(drop.suggestion),
         "matched": drop.matched,
+        # What the offered fix is worth. "the third check box in this group" is
+        # a real answer and a fragile one, and the operator decides knowing that
+        # rather than after a rerun.
+        "grade": drop.suggestion.get("robustness", ""),
+        "fix_label": drop.suggestion.get("label", ""),
     }, ensure_ascii=False)
 
 
