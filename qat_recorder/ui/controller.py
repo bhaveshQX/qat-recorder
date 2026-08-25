@@ -110,6 +110,10 @@ class RecorderController:
         self.registered_name = "_qat_recorder_session"
         #: Where `save()` last wrote, so a replay knows what to run.
         self.saved_to = ""
+        #: Stills and video for this session, or None when nobody asked for
+        #: them. Set by whoever knows where this session's files belong --
+        #: the agent does; a one-shot CLI recording does not have to care.
+        self.media = None
 
         self.events_seen = 0
         self.events_dropped = 0
@@ -187,6 +191,16 @@ class RecorderController:
                                       app_path=self.app_path)
         self.events_seen = 0
         self.events_dropped = 0
+        if self.media is not None:
+            # Only when nobody supplied one: whoever built the media holder may
+            # know better than this controller does, and a test certainly does.
+            if self.media.qat is None:
+                self.media.qat = self.qat
+            # Whatever it has to say about not filming is carried on the media
+            # listing and shown where the video would have been. It is not an
+            # error in the recording, and putting it on the error stream made
+            # every session open with a complaint about ffmpeg.
+            self.media.start_video()
         self._set_state(State.RECORDING)
 
     def stop(self) -> Optional[Recording]:
@@ -198,6 +212,11 @@ class RecorderController:
             before = len(self.session.recording.actions)
             recording = self.session.finish()
             self._emit_new_actions(before)
+
+        # Before the application is closed, so the last frame is the
+        # application rather than an empty desktop.
+        if self.media is not None:
+            self.media.stop_video()
 
         if self._receiver is not None:
             self._receiver.stop()
@@ -245,6 +264,19 @@ class RecorderController:
         self.session.recording.add(
             Action(ActionKind.CUSTOM_CODE, args={"code": code}))
         self._emit_new_actions(before)
+
+    def take_screenshot(self) -> dict:
+        """Photograph the application now, because the operator asked."""
+        if self.media is None:
+            raise ControllerError("this session is not keeping any media")
+        if self._state not in (State.RECORDING, State.PAUSED, State.PICKING):
+            raise ControllerError(
+                f"cannot photograph the application while {self._state.value}")
+        name = self.media.take_numbered("shot")
+        if not name:
+            raise ControllerError("the application could not be photographed")
+        self._report(f"screenshot: {name}")
+        return {"shot": name}
 
     def repair_suggestion(self, index: int, text: str = "") -> dict:
         """Fill the gap with the object that was checked when it happened.
@@ -346,7 +378,24 @@ class RecorderController:
             before = len(self.session.recording.actions)
             if self.session.flush_stale():
                 self._emit_new_actions(before)
+        self._photograph_new_gaps()
         return handled
+
+    def _photograph_new_gaps(self) -> None:
+        """A still for every gap that has appeared since the last look.
+
+        Here rather than in capture, which has no filesystem and no Qat: this is
+        the layer that owns both. Taken as soon after the event as the pump
+        runs, because the screen it is a picture of is the one the operator is
+        still looking at -- a second later they have moved on and the evidence
+        is gone.
+        """
+        if self.media is None or self.recording is None:
+            return
+        for index, drop in enumerate(self.recording.drops):
+            if drop.shot:
+                continue
+            drop.shot = self.media.take_numbered(f"gap-{index}")
 
     def _process(self, event: RawEvent) -> None:
         if self._state is State.PAUSED:

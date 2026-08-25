@@ -1,6 +1,6 @@
 const S = { IDLE: 'idle', RECORDING: 'recording', PAUSED: 'paused', PICKING: 'picking', STOPPED: 'stopped' };
 
-export default function Toolbar({ state, busy, onRecord, onPause, onStop, onCheckpoint, onInsertCode, onUndo, onSave, onKeep, onReplay }) {
+export default function Toolbar({ state, busy, onRecord, onPause, onStop, onCheckpoint, onInsertCode, onScreenshot, onUndo, onSave, onKeep, onReplay }) {
   const recording = state === S.RECORDING || state === S.PICKING;
   const idle      = state === S.IDLE || state === S.STOPPED;
 
@@ -41,6 +41,11 @@ export default function Toolbar({ state, busy, onRecord, onPause, onStop, onChec
         <button className="btn btn-accent" disabled={(state !== S.RECORDING && state !== S.PAUSED) || busy} onClick={onInsertCode}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5.5 4.5l-3 3.5 3 3.5M10.5 4.5l3 3.5-3 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           + Code
+        </button>
+        <button className="btn btn-accent" disabled={!(recording || state === S.PAUSED) || busy} onClick={onScreenshot}
+                title="photograph the application, on the machine it runs on">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 5h3l1-2h4l1 2h3v8H2V5z" stroke="currentColor" strokeWidth="1.3" fill="none"/><circle cx="8" cy="9" r="2.5" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
+          Shot
         </button>
         <button className="btn btn-ghost" disabled={(!recording && state !== S.STOPPED) || busy} onClick={onUndo}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 7h6a3 3 0 110 6H8" stroke="currentColor" strokeWidth="1.5" fill="none"/><path d="M6 5L4 7l2 2" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>

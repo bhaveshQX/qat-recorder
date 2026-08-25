@@ -998,3 +998,72 @@ body {
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* The still taken when the event was lost. Small enough to sit in the gap
+   without pushing the script apart; a click opens it full size. */
+.drop-gap-shot {
+  display: block;
+  margin-top: 10px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  max-width: 320px;
+  line-height: 0;
+}
+
+.drop-gap-shot img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.drop-gap-shot:hover {
+  border-color: var(--accent);
+}
+
+/* ─── The screen: stills and the session video ──────────────── */
+.screen-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.screen-video {
+  width: 100%;
+  max-height: 360px;
+  background: #000;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+}
+
+.screen-note {
+  color: var(--color-weak);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.screen-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.screen-strip a {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  line-height: 0;
+}
+
+.screen-strip a:hover { border-color: var(--accent); }
+.screen-strip img { width: 100%; height: auto; display: block; }
+
+.screen-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}

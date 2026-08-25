@@ -141,3 +141,66 @@ def test_filling_a_gap_that_is_not_there_is_refused(panel):
 def test_an_empty_repair_is_refused(panel):
     _with_a_gap(panel)
     assert panel.command("repair_drop", index=0, code="  ").status_code == 409
+
+
+# --- the screen, over the wire ---------------------------------------------
+
+def test_media_is_listed_and_the_stills_are_fetchable(panel, tmp_path):
+    """The application runs on the VM, the operator is somewhere else, and the
+    only route between the two is this connection."""
+    from qat_recorder.media import SessionMedia
+    from tests.test_media import FakeQat as ShootingQat
+
+    controller = panel.agent.session.controller
+    controller.media = SessionMedia(tmp_path / "session", record_video=False,
+                                    qat_module=ShootingQat())
+    _with_a_gap(panel)
+
+    listing = panel.client.get(f"/v1/sessions/{panel.session}/media",
+                               headers=AUTH).json()
+    assert listing["stills"], "the gap was not photographed"
+    assert listing["gap_shots"]["0"] == listing["stills"][0]
+
+    shot = panel.client.get(
+        f"/v1/sessions/{panel.session}/media/{listing['stills'][0]}",
+        headers=AUTH)
+    assert shot.status_code == 200
+    assert shot.content.startswith(b"\x89PNG")
+
+
+def test_a_still_can_be_fetched_with_the_token_in_the_query(panel, tmp_path):
+    """Nothing can put an Authorization header on an <img src>."""
+    from qat_recorder.media import SessionMedia
+    from tests.test_media import FakeQat as ShootingQat
+
+    controller = panel.agent.session.controller
+    controller.media = SessionMedia(tmp_path / "session", record_video=False,
+                                    qat_module=ShootingQat())
+    _with_a_gap(panel)
+    name = panel.client.get(f"/v1/sessions/{panel.session}/media",
+                            headers=AUTH).json()["stills"][0]
+
+    assert panel.client.get(
+        f"/v1/sessions/{panel.session}/media/{name}?token={TOKEN}").status_code == 200
+    assert panel.client.get(
+        f"/v1/sessions/{panel.session}/media/{name}").status_code == 401
+    assert panel.client.get(
+        f"/v1/sessions/{panel.session}/media/{name}?token=wrong").status_code == 401
+
+
+def test_media_outside_the_session_is_not_served(panel, tmp_path):
+    from qat_recorder.media import SessionMedia
+
+    controller = panel.agent.session.controller
+    controller.media = SessionMedia(tmp_path / "session", record_video=False)
+    (tmp_path / "secrets.txt").write_text("not yours")
+    answer = panel.client.get(
+        f"/v1/sessions/{panel.session}/media/..%2Fsecrets.txt", headers=AUTH)
+    assert answer.status_code == 404
+
+
+def test_a_session_with_no_media_says_so_rather_than_failing(panel):
+    listing = panel.client.get(f"/v1/sessions/{panel.session}/media",
+                               headers=AUTH).json()
+    assert listing["stills"] == []
+    assert listing["video_note"]

@@ -48,6 +48,7 @@ class Command(str, Enum):
     REPAIR_DROP = "repair_drop"
     ARM_REPAIR = "arm_repair"
     REPAIR_SUGGESTION = "repair_suggestion"
+    SCREENSHOT = "screenshot"
 
 
 class AgentError(RuntimeError):

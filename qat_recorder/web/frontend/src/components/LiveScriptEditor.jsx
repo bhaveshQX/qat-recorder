@@ -76,7 +76,7 @@ function whyNoFix(data) {
        + 'instead.';
 }
 
-function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy }) {
+function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy, shotUrl }) {
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
   const def = definitionFrom(data.seen);
@@ -102,6 +102,12 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
             every other step.
           </div>
         ) : null}
+        {shotUrl && (
+          <a className="drop-gap-shot" href={shotUrl} target="_blank" rel="noreferrer"
+             title="what was on screen when this event was lost — click to open full size">
+            <img src={shotUrl} alt="the screen when the event was lost" />
+          </a>
+        )}
         {fix && fix.needsText && (
           <input
             className="drop-gap-input"
@@ -159,7 +165,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
   );
 }
 
-export default function LiveScriptEditor({ script, onChange, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, readOnly, busy }) {
+export default function LiveScriptEditor({ script, onChange, onApply, onPoint, onCancelPoint, onWriteCode, shotFor, canPoint, picking, readOnly, busy }) {
   // Derived during render, not held in state. The script prop is the single
   // source of truth: an edit goes up through onChange and comes back down as
   // new text, so keeping a parsed copy in state only added a second render per
@@ -277,6 +283,7 @@ export default function LiveScriptEditor({ script, onChange, onApply, onPoint, o
                 onPoint={onPoint}
                 onCancelPoint={onCancelPoint}
                 onApply={onApply}
+                shotUrl={shotFor ? shotFor(part.data.index) : ''}
                 onWriteCode={onWriteCode}
               />
             </div>

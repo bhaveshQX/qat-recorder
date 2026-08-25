@@ -219,6 +219,10 @@ class Drop:
     #: the session has ended and the application is gone: it was checked when it
     #: could be checked.
     suggestion: dict = field(default_factory=dict)
+    #: File name of the still taken when the event was lost. The reason says why
+    #: the recorder failed; this says what the operator was looking at, which is
+    #: the part nobody can reconstruct afterwards.
+    shot: str = ""
     #: Set once the operator has filled the gap. A repaired drop is history: it
     #: is kept so the recording still says what was lost, and emits nothing.
     repaired: bool = False
@@ -233,6 +237,7 @@ class Drop:
             "t": round(self.t, 4),
             "matched": self.matched,
             "suggestion": dict(self.suggestion),
+            "shot": self.shot,
             "repaired": self.repaired,
         }
 
@@ -247,6 +252,7 @@ class Drop:
             t=float(data.get("t", 0.0)),
             matched=int(data.get("matched", -1)),
             suggestion=dict(data.get("suggestion", {})),
+            shot=data.get("shot", ""),
             repaired=bool(data.get("repaired", False)),
         )
 

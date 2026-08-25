@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { api, connectEvents } from './api';
+import { api, connectEvents, mediaUrl } from './api';
 import Header from './components/Header';
 import ConnectBar from './components/ConnectBar';
 import SetupBar from './components/SetupBar';
@@ -46,6 +46,7 @@ export default function App() {
   const [isScriptEdited, setIsScriptEdited] = useState(false);
   const [droppedEvents, setDroppedEvents] = useState([]);
   const [gaps, setGaps] = useState([]);
+  const [media, setMedia] = useState({ stills: [], video: '', gap_shots: {} });
   
   // ── modals ───────────────────────────────────────────
   const [showCodeModal, setShowCodeModal] = useState(false);
@@ -80,6 +81,10 @@ export default function App() {
   // watching the application rather than this panel.
   const openGaps = gaps.filter(gap => !gap.repaired).length;
   const updateStatus = useCallback((msg) => setStatusMsg(msg), []);
+  const shotFor = (index) => {
+    const name = media.gap_shots?.[String(index)];
+    return name ? mediaUrl(agentUrl, sessionId, name, token) : '';
+  };
 
   // ── connect to agent ───────────────────────────────
   const handleConnect = async (url, tok) => {
@@ -478,6 +483,9 @@ export default function App() {
         setGaps(res.gaps || []);
       })
       .catch(e => console.error("Preview failed:", e));
+    api.media(agentUrl, sessionId, token)
+      .then(setMedia)
+      .catch(() => {/* an agent too old to keep media is not an error */});
   }, [actions, sessionId, agentUrl, token, refreshTick]);
 
   return (
@@ -502,7 +510,16 @@ export default function App() {
           <Toolbar 
             state={state} busy={busy}
             onRecord={startRecording} onPause={togglePause} onStop={stopRecording}
-            onCheckpoint={armCheckpoint} onInsertCode={() => { setRepairTarget(null); setCustomCodeInput(''); setShowCodeModal(true); }} onUndo={undoLast} 
+            onCheckpoint={armCheckpoint} onInsertCode={() => { setRepairTarget(null); setCustomCodeInput(''); setShowCodeModal(true); }}
+                  onScreenshot={async () => {
+                    // sendCommand reports its own failure and answers with
+                    // nothing; claiming success regardless is how a failed
+                    // screenshot looked like a successful one.
+                    const answer = await sendCommand('screenshot');
+                    if (!answer) return;
+                    setRefreshTick(tick => tick + 1);
+                    updateStatus(`Screenshot taken on ${agentHost || 'the agent'}`);
+                  }} onUndo={undoLast} 
             onSave={saveSession} onKeep={() => setShowKeepModal(true)} onReplay={replaySession} 
           />
 
@@ -559,6 +576,11 @@ export default function App() {
                           onClick={() => setRightTab('json')}>
                     Live JSON
                   </button>
+                  <button className={`tab-btn ${rightTab === 'screen' ? 'active' : ''}`}
+                          onClick={() => setRightTab('screen')}>
+                    Screen
+                    {media.stills?.length > 0 && <span className="badge badge-muted" style={{marginLeft: 6}}>{media.stills.length}</span>}
+                  </button>
                   <button className={`tab-btn ${rightTab === 'dropped' ? 'active' : ''}`}
                           onClick={() => setRightTab('dropped')}>
                     Dropped Events {droppedEvents.length > 0 && <span className="badge badge-muted" style={{marginLeft: 6, color: 'var(--color-unresolved)'}}>{droppedEvents.length}</span>}
@@ -588,6 +610,7 @@ export default function App() {
                     onCancelPoint={() => sendCommand('cancel_checkpoint')
                       .then(() => updateStatus('Stopped waiting for a click'))}
                     onApply={applyFix}
+                    shotFor={shotFor}
                     onWriteCode={(drop) => {
                       setRepairTarget(drop.index);
                       setCustomCodeInput('');
@@ -600,6 +623,40 @@ export default function App() {
                   />
                   {recording && <div style={{padding: '8px 16px', background: 'var(--bg-surface)', color: 'var(--color-weak)', fontSize: '11px', borderTop: '1px solid var(--border-subtle)'}}>Script is Read-Only while recording. Stop recording to edit manually before saving.</div>}
                   {!recording && !idle && <div style={{padding: '8px 16px', background: 'var(--bg-surface)', color: 'var(--color-strong)', fontSize: '11px', borderTop: '1px solid var(--border-subtle)'}}>Editable mode. Your changes will be saved to test_recorded.py</div>}
+                </div>
+
+                <div className={`tab-content screen-tab ${rightTab === 'screen' ? 'active' : ''}`} style={{ display: rightTab === 'screen' ? 'flex' : 'none' }}>
+                  <div>
+                    <div className="screen-heading">The session, filmed on {agentHost || 'the agent'}</div>
+                    {media.video ? (
+                      <video className="screen-video" controls preload="metadata"
+                             src={mediaUrl(agentUrl, sessionId, media.video, token)} />
+                    ) : (
+                      <div className="screen-note">
+                        {media.filming
+                          ? 'Filming. The video is written as the session runs and can be played once it stops.'
+                          : (media.video_note || 'No video for this session.')}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="screen-heading">
+                      Stills ({media.stills?.length || 0}) — one at every gap, plus any you took
+                    </div>
+                    {media.stills?.length ? (
+                      <div className="screen-strip">
+                        {media.stills.map(name => (
+                          <a key={name} href={mediaUrl(agentUrl, sessionId, name, token)}
+                             target="_blank" rel="noreferrer" title={name}>
+                            <img src={mediaUrl(agentUrl, sessionId, name, token)} alt={name} />
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="screen-note">Nothing photographed yet.</div>
+                    )}
+                  </div>
                 </div>
 
                 <div className={`tab-content ${rightTab === 'dropped' ? 'active' : ''}`} style={{ display: rightTab === 'dropped' ? 'flex' : 'none', flex: 1, padding: 16, overflow: 'auto', flexDirection: 'column', gap: '8px' }}>

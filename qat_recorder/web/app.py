@@ -190,6 +190,35 @@ def create_app(agent, token: str = "") -> FastAPI:
     async def preview(session_id: str, _auth=Authenticated):
         return _handle(agent.preview, session_id)
 
+    @app.get("/v1/sessions/{session_id}/media")
+    async def media(session_id: str, _auth=Authenticated):
+        return _handle(agent.media, session_id)
+
+    @app.get("/v1/sessions/{session_id}/media/{name}")
+    async def media_file(session_id: str, name: str, request: Request,
+                         token: str = Query("")):
+        """One still or the video.
+
+        FileResponse, not a JSON blob: a browser can put a PNG straight into an
+        <img> and, because it answers range requests, seek inside the video
+        without downloading all of it first.
+
+        Authenticated by header *or* query string, the same concession the
+        WebSocket makes and for the same reason: nothing can put an
+        Authorization header on an <img src> or a <video src>.
+        """
+        if app.state.token:
+            presented = parse_bearer(request.headers.get("Authorization") or "")
+            if not (token_matches(app.state.token, presented)
+                    or token_matches(app.state.token, token)):
+                raise HTTPException(status_code=401, detail="unauthorised")
+        try:
+            path = agent.media_file(session_id, name)
+        except AgentError as error:
+            raise HTTPException(status_code=error.status or 404,
+                                detail={"error": str(error)})
+        return FileResponse(str(path))
+
     @app.post("/v1/sessions/{session_id}/replay")
     async def replay(session_id: str, body: ReplayRequest, _auth=Authenticated):
         loop = asyncio.get_event_loop()

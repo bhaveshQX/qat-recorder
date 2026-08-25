@@ -41,6 +41,7 @@ export const api = {
   artifacts:    (base, sid, custom_script, token) => 
     request(base, 'POST', `/v1/sessions/${sid}/artifacts`, { custom_script }, token),
   preview:      (base, sid, token) => request(base, 'GET', `/v1/sessions/${sid}/preview`, undefined, token),
+  media:        (base, sid, token) => request(base, 'GET', `/v1/sessions/${sid}/media`, undefined, token),
   replay:       (base, sid, timeout, token) =>
     request(base, 'POST', `/v1/sessions/${sid}/replay`, { timeout: timeout || 0 }, token),
   keep:         (base, sid, name, verify, token) =>
@@ -52,6 +53,15 @@ export const api = {
   runTest:      (base, testId, timeout, token) =>
     request(base, 'POST', '/v1/tests/run', { test: testId, timeout: timeout || 0 }, token),
 };
+
+// A still or the video, as a URL an <img> or <video> can load directly. The
+// agent answers range requests, so the video seeks without being downloaded
+// whole. The token rides in the query string because a browser cannot put a
+// header on an <img src>.
+export function mediaUrl(base, sid, name, token) {
+  const auth = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${base}/v1/sessions/${sid}/media/${encodeURIComponent(name)}${auth}`;
+}
 
 // ── WebSocket for real-time events ──────────────────────────────
 

@@ -172,6 +172,16 @@ class Agent:
 
             controller = self.controller_factory(app=app, lib=lib, name=name)
             session = Session(controller, owner=owner, app=name or app)
+            # Stills and video belong beside the rest of the session's files, on
+            # the machine that can actually see the screen. Set before start(),
+            # which is what begins filming.
+            from qat_recorder.media import SessionMedia      # noqa: PLC0415
+
+            if getattr(controller, "media", None) is None:
+                controller.media = SessionMedia(
+                    session.directory(),
+                    qat_module=getattr(controller, "qat", None),
+                    record_video=os.environ.get("QATREC_NO_VIDEO") != "1")
             try:
                 with session.lock:
                     controller.start()
@@ -262,6 +272,8 @@ class Agent:
                 elif action is Command.REPAIR_SUGGESTION:
                     controller.repair_suggestion(int(args.get("index", -1)),
                                                  args.get("text", ""))
+                elif action is Command.SCREENSHOT:
+                    controller.take_screenshot()
             except Exception as error:                        # noqa: BLE001
                 raise AgentError(str(error), 409)
             return {"state": controller.state.value,
@@ -315,6 +327,31 @@ class Agent:
                 "files": files,
                 "directory": str(directory),
             }
+
+    def media(self, session_id: str) -> dict:
+        """What was captured of the screen, and what to ask for to see it."""
+        session = self._require(session_id)
+        with session.lock:
+            holder = getattr(session.controller, "media", None)
+            if holder is None:
+                return {"stills": [], "video": "", "video_note":
+                        "this session is not keeping any media", "filming": False}
+            described = holder.describe()
+            recording = session.controller.recording
+            described["gap_shots"] = {
+                str(index): drop.shot
+                for index, drop in enumerate(recording.drops if recording else [])
+                if drop.shot}
+            return described
+
+    def media_file(self, session_id: str, name: str):
+        """The bytes of one still or the video, as a path. Never escapes."""
+        session = self._require(session_id)
+        holder = getattr(session.controller, "media", None)
+        path = holder.path_of(name) if holder is not None else None
+        if path is None:
+            raise AgentError(f"no media called {name!r} in this session", 404)
+        return path
 
     def preview(self, session_id: str) -> dict:
         from qat_recorder.emit import emit_python
