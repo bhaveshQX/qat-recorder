@@ -277,6 +277,10 @@ class Agent:
                                            args.get("code", ""))
                 elif action is Command.ARM_REPAIR:
                     controller.arm_repair(int(args.get("index", -1)))
+                elif action is Command.PICK_NOW:
+                    controller.pick_now()
+                elif action is Command.CANCEL_REPAIR:
+                    controller.cancel_repair()
                 elif action is Command.REPAIR_SUGGESTION:
                     controller.repair_suggestion(int(args.get("index", -1)),
                                                  args.get("text", ""))

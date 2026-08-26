@@ -306,11 +306,16 @@ def test_pointing_at_a_control_fills_the_gap_with_a_real_step(controller):  # no
     """
     _record_a_gap(controller)
     controller.arm_repair(0)
+    assert controller.state is State.PAUSED, (
+        "arming pauses, so walking back to the control records nothing")
+    controller.pick_now()
     assert controller.state is State.PICKING
 
     _point_at(controller, "QPushButton", "loginButton")
 
-    assert controller.state is State.RECORDING
+    # Still paused: the operator navigated to get here, and resuming from this
+    # screen would record the next steps from the wrong place.
+    assert controller.state is State.PAUSED
     filled = controller.recording.actions[-1]
     assert filled.kind is ActionKind.CLICK
     assert filled.target.definition["objectName"] == "loginButton"
@@ -322,6 +327,7 @@ def test_the_pointing_click_is_not_recorded_as_a_step_of_its_own(controller):  #
     _record_a_gap(controller)
     before = len(controller.recording.actions)
     controller.arm_repair(0)
+    controller.pick_now()
     _point_at(controller, "QPushButton", "loginButton")
     # Exactly one action added: the repair. Not the click that chose it.
     assert len(controller.recording.actions) == before + 1
@@ -337,6 +343,7 @@ def test_the_step_matches_the_event_that_was_lost(controller):  # noqa: F811
     assert len(controller.recording.drops) == 1
 
     controller.arm_repair(0)
+    controller.pick_now()
     _point_at(controller, "QPushButton", "loginButton")
     assert controller.recording.actions[-1].kind is ActionKind.DOUBLE_CLICK
 
@@ -358,7 +365,8 @@ def test_a_checkpoint_pick_is_still_a_checkpoint(controller):  # noqa: F811
     """Arming a repair must not leave the next checkpoint filling gaps."""
     _record_a_gap(controller)
     controller.arm_repair(0)
-    controller.cancel_checkpoint()
+    controller.cancel_repair()
+    controller.resume()                    # arming paused; come back to it
 
     controller.arm_checkpoint()
     _point_at(controller, "QPushButton", "loginButton")

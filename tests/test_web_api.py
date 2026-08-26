@@ -211,17 +211,18 @@ def test_a_session_with_no_media_says_so_rather_than_failing(panel):
 def test_pointing_arms_and_the_next_click_fills_the_gap(panel):
     """The whole path the panel drives, end to end.
 
-    Arm from the browser; the operator clicks the control in the application;
-    the click is resolved the way every recorded step is resolved and lands in
-    the gap. The click itself is not recorded as a step of its own.
+    Arm from the browser, which pauses; say the control is on screen; the
+    operator clicks it; the click is resolved the way every recorded step is
+    resolved and lands in the gap, without being recorded as a step of its own.
     """
     _with_a_gap(panel)
     assert panel.preview()["open_gaps"] == 1
 
     armed = panel.command("arm_repair", index=0)
     assert armed.status_code == 200
-    assert armed.json()["state"] == "picking", (
-        "the panel shows Waiting from this, not from the next socket frame")
+    assert armed.json()["state"] == "paused", (
+        "the panel shows this from the response, not from the next socket frame")
+    assert panel.command("pick_now").json()["state"] == "picking"
 
     steps_before = len([g for g in panel.preview()["script"].splitlines()
                         if "mouse_click" in g])
@@ -244,7 +245,80 @@ def test_pointing_needs_a_running_application(panel):
 
 
 def test_arming_can_be_called_off(panel):
+    """Cancelling leaves the recording paused on purpose: the operator has been
+    walking around the application, and resuming from wherever they ended up
+    would record the next steps from the wrong place."""
     _with_a_gap(panel)
     panel.command("arm_repair", index=0)
-    assert panel.command("cancel_checkpoint").json()["state"] == "recording"
+    assert panel.command("cancel_repair").json()["state"] == "paused"
     assert panel.preview()["open_gaps"] == 1, "the gap is still open"
+
+
+# --- pointing at a control you have to walk back to ------------------------
+
+def test_arming_pauses_so_navigation_costs_nothing(panel):
+    """The flaw that made pointing unusable in a real session.
+
+    A gap is noticed from a different screen than the one it happened on.
+    Getting back there takes clicks -- and the first version consumed the first
+    of them as the pick, so anything more than one click away was unreachable,
+    while navigating there before arming recorded the navigation as steps.
+    """
+    _with_a_gap(panel)
+    armed = panel.command("arm_repair", index=0)
+    assert armed.json()["state"] == "paused"
+    assert armed.json()["summary"]["arming"] == 0
+
+    steps_before = panel.preview()["script"].count("mouse_click")
+    # Walking back to the control: four clicks, none of them the pick.
+    for at in range(400, 800, 100):
+        panel.push(*click_pair(at, "QPushButton", "loginButton"))
+
+    after = panel.preview()
+    assert after["script"].count("mouse_click") == steps_before, (
+        "navigating back to the control was recorded as steps")
+    assert after["open_gaps"] == 1, "and none of those clicks was taken as the pick"
+
+
+def test_the_click_after_it_is_on_screen_now_is_the_pick(panel):
+    _with_a_gap(panel)
+    panel.command("arm_repair", index=0)
+    panel.push(*click_pair(400, "QPushButton", "loginButton"))     # navigation
+
+    ready = panel.command("pick_now")
+    assert ready.json()["state"] == "picking"
+    panel.push(*click_pair(700, "QPushButton", "loginButton"))     # the pick
+
+    after = panel.preview()
+    assert after["open_gaps"] == 0
+    assert after["gaps"][0]["repaired"] is True
+
+
+def test_after_filling_a_gap_the_recording_is_still_paused(panel):
+    """The operator navigated to get here; resuming from this screen would
+    record the next steps from the wrong place."""
+    _with_a_gap(panel)
+    panel.command("arm_repair", index=0)
+    panel.command("pick_now")
+    panel.push(*click_pair(700, "QPushButton", "loginButton"))
+    assert panel.client.get("/v1/sessions", headers=AUTH).json()[
+        "session"]["state"] == "paused"
+
+
+def test_only_the_gap_being_filled_says_it_is_waiting(panel):
+    """`arming` names the gap. A global picking flag put every gap on screen
+    into Waiting at once."""
+    _with_a_gap(panel)
+    panel.push(*click_pair(900, "QNotEither", "alsoNothing"))
+    assert panel.preview()["open_gaps"] == 2
+
+    panel.command("arm_repair", index=1)
+    assert panel.command("pick_now").json()["summary"]["arming"] == 1
+
+
+def test_giving_up_leaves_the_recording_paused(panel):
+    _with_a_gap(panel)
+    panel.command("arm_repair", index=0)
+    answer = panel.command("cancel_repair")
+    assert answer.json()["summary"]["arming"] is None
+    assert panel.preview()["open_gaps"] == 1

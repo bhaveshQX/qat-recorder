@@ -448,18 +448,26 @@ class RecorderController:
         self._set_state(State.PICKING)
 
     def arm_repair(self, index: int) -> None:
-        """Fill the gap at `index` with whatever the operator points at next.
+        """Begin filling the gap at `index` by pointing at the control.
 
         The application is still running and the operator is still in front of
         it, so the strongest thing the recorder can do is watch them show it the
-        control it could not name. What comes back is not a guess assembled from
-        what the filter reported -- it goes through the same resolver a recorded
-        step goes through, so the step carries every locator that identifies the
-        object right now, validated against the running application.
+        control it could not name: what comes back goes through the same
+        resolver a recorded step goes through, rather than being assembled from
+        what the filter reported about an object it could not find.
 
-        That is the difference between a fix and a plausible fix.
+        But the gap is usually noticed long after it happened, from a different
+        screen. Getting back to the control takes clicks -- and the first
+        version consumed the first of those as the pick, so pointing at anything
+        more than one click away was impossible, and navigating there *before*
+        arming recorded the navigation as steps.
+
+        So this pauses instead of picking. Nothing the operator does while
+        finding their way back is recorded, exactly as pause has always worked;
+        when they are in front of the control they say so with `pick_now`, and
+        the click after that is the one that counts.
         """
-        if self._state is not State.RECORDING:
+        if self._state not in (State.RECORDING, State.PAUSED):
             raise ControllerError(
                 f"cannot point at anything while {self._state.value}; "
                 "the application has to be running")
@@ -473,7 +481,29 @@ class RecorderController:
         self.picked_node = None
         self.picked_properties = {}
         self._repairing = index
+        if self._state is State.RECORDING:
+            self.poll()               # close anything already in flight
+            self._set_state(State.PAUSED)
+
+    def pick_now(self) -> None:
+        """The operator is in front of the control; the next click is the pick."""
+        if self._repairing is None:
+            raise ControllerError("no gap is waiting to be filled")
+        if self._state is not State.PAUSED:
+            raise ControllerError(
+                f"cannot pick while {self._state.value}")
         self._set_state(State.PICKING)
+
+    def cancel_repair(self) -> None:
+        """Give up on filling this gap. The recording stays paused.
+
+        Deliberately not back to recording: the operator has been navigating
+        around the application with nothing being captured, and resuming without
+        noticing would record the next steps from wherever they have ended up.
+        """
+        self._repairing = None
+        if self._state is State.PICKING:
+            self._set_state(State.PAUSED)
 
     def cancel_checkpoint(self) -> None:
         if self._state is not State.PICKING:
@@ -492,7 +522,8 @@ class RecorderController:
         self._drop_next_release = True
         resolved = self.session.resolve_locator(event.target)
         repairing, self._repairing = self._repairing, None
-        self._set_state(State.RECORDING)
+        self._set_state(State.PAUSED if repairing is not None
+                        else State.RECORDING)
         if resolved is None:
             self._report("that object could not be identified either"
                          if repairing is not None else
@@ -505,6 +536,10 @@ class RecorderController:
 
         if repairing is not None:
             self._fill_gap_with(repairing, target)
+            # Not back to recording. The operator navigated here; resuming from
+            # this screen would record the next steps from the wrong place, and
+            # only they can decide when the application is back where it was.
+            self._set_state(State.PAUSED)
             return
         if self.on_picked:
             self.on_picked(target, self.picked_properties)
@@ -568,6 +603,10 @@ class RecorderController:
             # counts a press and its release twice; this counts the things the
             # operator is actually being asked about.
             "gaps": len(recording.open_drops()) if recording else 0,
+            # Which gap is being filled, or None. Without this the panel has
+            # only the global picking state, so every gap on screen showed
+            # itself as waiting when one of them was.
+            "arming": self._repairing,
             "fragile": len(weak),
             "secrets": len(recording.secrets()) if recording else 0,
         }

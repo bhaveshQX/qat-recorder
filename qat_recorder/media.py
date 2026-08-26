@@ -12,8 +12,13 @@ Two different jobs:
 thing nobody can reconstruct afterwards is what was on screen at that moment --
 which dialog was open, which tab, what the thing they clicked looked like. The
 reason string says why the recorder failed; the picture says what the operator
-was doing. It is taken through Qat, which is already connected to the
-application and already knows how to do it.
+was doing.
+
+Of the *screen*, not of the application. The things that go missing at a gap are
+overwhelmingly pop-ups -- a combo box's drop-down, a context menu, a modal
+dialog, a file picker that is not a Qt widget at all -- and none of those are in
+a photograph of the application's own window. Qat can only give the second kind,
+so it is the fallback where there is no ffmpeg.
 
 **A video of the whole session.** For the failures that are about *sequence*: a
 dialog that appeared and closed again, a step that went to the wrong window, a
@@ -45,6 +50,10 @@ FRAMERATE = 10
 #: ffmpeg gets this long to finish writing the file after being asked to stop.
 #: It has to flush and close the container; killed halfway, the mp4 is unplayable.
 CLOSE_TIMEOUT_S = 10.0
+
+#: A single frame should be instant. If the display is wedged, a gap without a
+#: picture is far better than a recording that stalls waiting for one.
+GRAB_TIMEOUT_S = 5.0
 
 #: Gaps arrive in bursts -- six unnamed check boxes in one dialog are six gaps a
 #: second apart, all looking at the same screen. Six identical photographs of it
@@ -88,25 +97,64 @@ class SessionMedia:
         return self.directory / "shots"
 
     def take(self, name: str) -> str:
-        """Photograph the application. Returns the file name, or "" if it failed.
+        """Photograph the screen. Returns the file name, or "" if it failed.
 
-        Through Qat rather than through the screen grabber: Qat is already
-        attached to the application and captures it whatever is stacked on top,
-        which is what makes the picture usable when a modal dialog is what went
-        wrong.
+        The screen, not the application. Qat can photograph the widget tree it
+        is attached to, and that is exactly the wrong picture for this: what
+        goes missing at a gap is a *popup* -- a combo box's drop-down, a context
+        menu, a modal dialog, a GTK file picker that is not a Qt widget at all.
+        Those are separate top-level windows or override-redirect surfaces, and
+        a photograph of the application's own window does not contain them. The
+        operator ends up looking at the main window and asking why the recorder
+        thinks that is what they were doing.
+
+        So the display is grabbed instead, through the same ffmpeg already used
+        to film the session. Qat is the fallback for a machine that has no
+        ffmpeg: the main window is worth more than nothing.
         """
-        if self.qat is None:
-            return ""
         shot = f"{name}.png"
         try:
             self.shots_dir.mkdir(parents=True, exist_ok=True)
-            self.qat.take_screenshot(str(self.shots_dir / shot))
-        except Exception:                                    # noqa: BLE001
+        except OSError:
             return ""
-        if not (self.shots_dir / shot).exists():
+        path = self.shots_dir / shot
+
+        if not (self._grab_screen(path) or self._ask_qat(path)):
             return ""
         self._shots += 1
         return shot
+
+    def _grab_screen(self, path) -> bool:
+        """One frame of the whole display: popups, dialogs and all."""
+        if not os.environ.get("DISPLAY") or shutil.which("ffmpeg") is None:
+            return False
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-f", "x11grab", "-i", _display(), "-frames:v", "1",
+                 str(path)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=GRAB_TIMEOUT_S, check=False)
+        except Exception:                                    # noqa: BLE001
+            return False
+        return path.is_file() and path.stat().st_size > 0
+
+    def _ask_qat(self, path) -> bool:
+        """The application's own window. Better than nothing, worse than the screen."""
+        if self.qat is None:
+            return False
+        try:
+            self.qat.take_screenshot(str(path))
+        except Exception:                                    # noqa: BLE001
+            return False
+        if not (path.is_file() and path.stat().st_size > 0):
+            return False
+        if not self.still_note:
+            self.still_note = (
+                "stills are of the application's own window: ffmpeg is not "
+                "installed here, so pop-ups, menus and native dialogs stacked "
+                "over it are not in them")
+        return True
 
     def take_numbered(self, prefix: str) -> str:
         """A still named so the order it was taken in survives a directory listing."""

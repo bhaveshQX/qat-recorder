@@ -95,11 +95,17 @@ const GRADE_COLOUR = {
   fragile: 'var(--color-fragile)',
 };
 
-function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode, canPoint, picking, busy, shot }) {
+function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
+                              onWriteCode, canPoint, picking, arming, busy, shot,
+                              onOpenShot }) {
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
   const def = definitionFrom(data.seen);
   const why = whyNoFix(data, canPoint);
+  // Which gap is being filled -- not merely that one of them is. Sharing a
+  // single global picking flag put every gap on screen into Waiting at once.
+  const armed = arming === data.index;
+  const someoneElseArmed = arming !== null && arming !== undefined && !armed;
 
   return (
     <div className="drop-gap">
@@ -120,10 +126,14 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
               + 'breaks under translation'}.
           </div>
         )}
-        {picking ? (
+        {armed ? (
           <div className="drop-gap-waiting">
-            Waiting for you. Switch to the application and click the control —
-            that click fills this gap and is not recorded as a step of its own.
+            {picking
+              ? 'Ready — click that control in the application now. That click '
+                + 'fills this gap and is not recorded as a step of its own.'
+              : 'Recording is paused. Navigate to that control however you like '
+                + '— nothing you do now is recorded. When you are in front of '
+                + 'it, press "It is on screen now".'}
           </div>
         ) : why ? (
           <div className="drop-gap-note">{why}</div>
@@ -134,10 +144,11 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
           </div>
         ) : null}
         {shot && (
-          <div className="drop-gap-shot"
-               title="what was on screen when this event was lost">
+          <button type="button" className="drop-gap-shot"
+                  title="what was on screen when this event was lost — click to enlarge"
+                  onClick={() => onOpenShot && onOpenShot(shot)}>
             <MediaImage {...shot} alt="the screen when the event was lost" />
-          </div>
+          </button>
         )}
         {fix && fix.needsText && (
           <input
@@ -155,7 +166,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
           <button
             className="btn btn-primary btn-sm"
             title={fix.hint}
-            disabled={busy || picking || (fix.needsText && !typed.trim())}
+            disabled={busy || armed || someoneElseArmed || (fix.needsText && !typed.trim())}
             onClick={() => onApply(data.index, fix.needsText ? typed : '')}
           >
             {fix.label}
@@ -166,21 +177,31 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
             )}
           </button>
         )}
-        {canPoint && (
-          picking ? (
-            // Armed. The operator may have changed their mind, and without this
-            // the only way out is to click something in the application.
+        {armed ? (
+          <>
+            {!picking && (
+              <button
+                className="btn btn-primary btn-sm"
+                title="the next click in the application is the one that counts"
+                onClick={onPickNow}
+              >
+                It is on screen now
+              </button>
+            )}
             <button
               className="btn btn-secondary btn-sm"
-              title="stop waiting for a click"
+              title="give up on filling this gap"
               onClick={onCancelPoint}
             >
-              Waiting — cancel
+              Cancel
             </button>
-          ) : (
+          </>
+        ) : canPoint && !someoneElseArmed && (
+          (
+
             <button
               className={fix ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
-              title="click the control in the application and the recorder works out how to address it"
+              title="pause, walk back to the control, then point at it"
               disabled={busy}
               onClick={() => onPoint(data.index)}
             >
@@ -190,7 +211,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
         )}
         <button
           className="btn btn-ghost btn-sm"
-          disabled={busy || picking}
+          disabled={busy || armed || someoneElseArmed}
           title="write the step yourself"
           onClick={() => onWriteCode(data)}
         >
@@ -201,7 +222,10 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
   );
 }
 
-export default function LiveScriptEditor({ script, onChange, onApply, onPoint, onCancelPoint, onWriteCode, shotFor, canPoint, picking, readOnly, busy }) {
+export default function LiveScriptEditor({ script, onChange, onApply, onPoint,
+                                           onPickNow, onCancelPoint, onWriteCode,
+                                           shotFor, onOpenShot, canPoint, picking,
+                                           arming, readOnly, busy }) {
   // Derived during render, not held in state. The script prop is the single
   // source of truth: an edit goes up through onChange and comes back down as
   // new text, so keeping a parsed copy in state only added a second render per
@@ -317,6 +341,9 @@ export default function LiveScriptEditor({ script, onChange, onApply, onPoint, o
                 canPoint={canPoint}
                 picking={picking}
                 onPoint={onPoint}
+                onPickNow={onPickNow}
+                arming={arming}
+                onOpenShot={onOpenShot}
                 onCancelPoint={onCancelPoint}
                 onApply={onApply}
                 shot={shotFor ? shotFor(part.data.index) : null}

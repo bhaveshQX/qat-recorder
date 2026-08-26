@@ -23,6 +23,9 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [agentHost, setAgentHost] = useState('');
   const [build, setBuild] = useState(null);
+  // A still opened full size. The thumbnail in a gap is too small to
+  // recognise a dialog by.
+  const [lightbox, setLightbox] = useState(null);
 
   // ── session state ──────────────────────────────────
   const [state, setState]         = useState(S.IDLE);
@@ -348,18 +351,44 @@ export default function App() {
   // operator shows the recorder the control it could not name. The click goes
   // through the same resolver a recorded step goes through, so the step it
   // produces carries locators validated against the running application.
+  // Pointing is two steps, because the gap is almost always noticed from a
+  // different screen than the one it happened on. Arming pauses the recording
+  // so getting back there costs nothing; the second step says the control is in
+  // front of them and the click after it is the one that counts.
+  const applyRepairState = (answer) => {
+    if (answer?.state) setState(answer.state);
+    if (answer?.summary) setSummary(answer.summary);
+  };
+
   const pointAtGap = async (index) => {
     if (!sessionId) return;
     try {
-      const answer = await api.command(agentUrl, sessionId, 'arm_repair',
-                                       { index }, token);
-      // From the response, not from the next WebSocket frame. Waiting for that
-      // left more than a second between the click and any sign of it, which
-      // reads as a button that does nothing.
-      if (answer?.state) setState(answer.state);
-      updateStatus('Waiting — switch to the application and click that control');
+      applyRepairState(await api.command(agentUrl, sessionId, 'arm_repair',
+                                         { index }, token));
+      updateStatus('Paused — walk back to that control; nothing is being recorded');
     } catch (e) {
       updateStatus(`Could not start pointing: ${e.message}`);
+    }
+  };
+
+  const pickNow = async () => {
+    if (!sessionId) return;
+    try {
+      applyRepairState(await api.command(agentUrl, sessionId, 'pick_now', {}, token));
+      updateStatus('Ready — click that control in the application');
+    } catch (e) {
+      updateStatus(`Could not arm the pick: ${e.message}`);
+    }
+  };
+
+  const cancelRepair = async () => {
+    if (!sessionId) return;
+    try {
+      applyRepairState(await api.command(agentUrl, sessionId, 'cancel_repair',
+                                         {}, token));
+      updateStatus('Gave up on that gap. Recording is still paused — resume when the application is back where it was.');
+    } catch (e) {
+      updateStatus(`Could not cancel: ${e.message}`);
     }
   };
 
@@ -633,11 +662,10 @@ export default function App() {
                     canPoint={state === S.RECORDING || state === S.PICKING}
                     picking={state === S.PICKING}
                     onPoint={pointAtGap}
-                    onCancelPoint={async () => {
-                      const answer = await sendCommand('cancel_checkpoint');
-                      if (answer?.state) setState(answer.state);
-                      updateStatus('Stopped waiting for a click');
-                    }}
+                    onPickNow={pickNow}
+                    onCancelPoint={cancelRepair}
+                    arming={summary.arming ?? null}
+                    onOpenShot={setLightbox}
                     onApply={applyFix}
                     shotFor={shotFor}
                     onWriteCode={(drop) => {
@@ -713,6 +741,14 @@ export default function App() {
             </div>
           </div>
         </>
+      )}
+
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <MediaImage {...lightbox} alt="what was on screen" />
+          <button className="btn btn-secondary btn-sm lightbox-close"
+                  onClick={() => setLightbox(null)}>Close</button>
+        </div>
       )}
 
       {build?.mismatch && (
