@@ -1180,3 +1180,9 @@ button.drop-gap-shot {
 }
 
 .field-check input { width: auto; }
+
+.drop-gap-proposal-failed {
+  background: rgba(255, 123, 123, 0.10);
+  border-color: var(--color-unresolved);
+  color: var(--color-unresolved);
+}

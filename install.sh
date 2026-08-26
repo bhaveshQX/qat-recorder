@@ -103,6 +103,21 @@ pkg_for() {
         apt:venv)        echo "python3-venv" ;;
         *:venv)          echo "" ;;
 
+        # Photographs the screen at every gap, and films the session. ffmpeg
+        # does both; ImageMagick only the stills, but it is in the base
+        # repository everywhere and ffmpeg is not -- on RHEL and its
+        # derivatives ffmpeg needs RPM Fusion, which a locked-down VM will not
+        # have. Both are attempted; either is enough for stills to show the
+        # whole screen instead of just the application's own window.
+        dnf:video)       echo "ffmpeg" ;;
+        apt:video)       echo "ffmpeg" ;;
+        zypper:video)    echo "ffmpeg" ;;
+        pacman:video)    echo "ffmpeg" ;;
+        dnf:grabber)     echo "ImageMagick" ;;
+        apt:grabber)     echo "imagemagick" ;;
+        zypper:grabber)  echo "ImageMagick" ;;
+        pacman:grabber)  echo "imagemagick" ;;
+
         *) echo "" ;;
     esac
 }
@@ -198,6 +213,28 @@ cmd_vm() {
     done
     printf '    required: %s\n' "${required[*]}"
     pkg_install "${required[@]}" || fail "could not install the build tools"
+
+    # A screen grabber, so a still at a gap is the whole screen -- every tab,
+    # every pop-up, every dialog stacked over the application -- instead of the
+    # application's own window, which is what Qat can photograph and is almost
+    # never what went wrong. Optional, and separately, because ffmpeg is not in
+    # the base repository on RHEL and its derivatives while ImageMagick is.
+    local grabbed=""
+    for role in video grabber; do
+        local g; g=$(pkg_for "$role")
+        [ -n "$g" ] || continue
+        if pkg_install "$g" > /dev/null 2>&1; then
+            grabbed="$grabbed $g"
+        fi
+    done
+    if [ -n "$grabbed" ]; then
+        ok "screen capture:$grabbed"
+        command -v ffmpeg > /dev/null 2>&1 ||             warn "  no ffmpeg, so the session is not filmed; stills still work"
+    else
+        warn "no screen grabber could be installed (tried ffmpeg, ImageMagick)."
+        warn "  Recording is unaffected. Stills at gaps will show only the"
+        warn "  application's own window, not pop-ups or other windows over it."
+    fi
 
     local staticcxx qml
     staticcxx=$(pkg_for staticcxx)
@@ -409,6 +446,18 @@ cmd_uninstall() {
     echo "  System packages (cmake, Qt dev) were left alone — remove them yourself if unwanted."
 }
 
+report_screen_tools() {
+    local found=""
+    for tool in ffmpeg import scrot gnome-screenshot spectacle; do
+        command -v "$tool" > /dev/null 2>&1 && found="$found $tool"
+    done
+    if [ -n "$found" ]; then
+        ok "screen capture:$found"
+    else
+        warn "no screen grabber — stills will show only the application window"
+    fi
+}
+
 cmd_doctor() {
     step "Machine"
     detect_os; echo "    $OS_NAME (package manager: $PKG)"
@@ -432,6 +481,7 @@ cmd_doctor() {
     for tool in cmake c++ python3; do
         command -v "$tool" >/dev/null && ok "$tool" || warn "$tool is missing"
     done
+    report_screen_tools
 
     step "Display"
     if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then

@@ -147,11 +147,25 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
         ) : null}
         {mine && (
           proposal.thinking ? (
-            <div className="drop-gap-note">Asking the model…</div>
+            <div className="drop-gap-waiting">Asking the model…</div>
+          ) : proposal.failed ? (
+            <div className="drop-gap-proposal drop-gap-proposal-failed">
+              <div>The model could not be asked: {proposal.failed}</div>
+              <div className="drop-gap-proposal-actions">
+                <button className="btn btn-secondary btn-sm"
+                        onClick={() => onAskModel(data.index)}>Try again</button>
+                <button className="btn btn-ghost btn-sm"
+                        onClick={onDismissProposal}>Dismiss</button>
+              </div>
+            </div>
           ) : proposal.answer?.id === null ? (
             <div className="drop-gap-note">
               The model would not choose: {proposal.answer.why || 'nothing in the list convinced it'}.
               {' '}Better a gap you can still see than a step that clicks the wrong thing.
+              <div className="drop-gap-proposal-actions">
+                <button className="btn btn-ghost btn-sm"
+                        onClick={onDismissProposal}>Dismiss</button>
+              </div>
             </div>
           ) : proposal.candidate ? (
             <div className="drop-gap-proposal">

@@ -16,6 +16,10 @@
 
 const STORE_KEY = 'qatrec.llm';
 
+//: Long enough for a slow model, short enough that a wedged call gives the
+//: button back rather than leaving the panel thinking forever.
+const TIMEOUT_MS = 60000;
+
 export const DEFAULTS = {
   baseUrl: 'https://api.groq.com/openai/v1',
   model: 'openai/gpt-oss-120b',
@@ -123,21 +127,42 @@ export async function chooseCandidate(settings, pack, meta, imageDataUrl) {
        { type: 'image_url', image_url: { url: imageDataUrl } }]
     : prompt;
 
-  const response = await fetch(`${settings.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      temperature: 0,
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content },
-      ],
-    }),
-  });
+  // Bounded. A call that never settles leaves the panel saying "Asking the
+  // model..." for the rest of the session with no way back to the button.
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${settings.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+      method: 'POST',
+      signal: stop.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content },
+        ],
+      }),
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`no answer from ${settings.baseUrl} within `
+                    + `${Math.round(TIMEOUT_MS / 1000)}s`);
+    }
+    // fetch rejects with a bare TypeError for a blocked cross-origin request,
+    // which is the commonest way this fails and says nothing useful on its own.
+    throw new Error(
+      `could not reach ${settings.baseUrl} from this browser (${error.message}). `
+      + 'If the endpoint does not allow browser requests, its CORS policy is '
+      + 'blocking this and no error body is available to show.');
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;

@@ -381,7 +381,10 @@ export default function App() {
         ? 'The model would not choose one — nothing in the list convinced it'
         : `The model suggests id ${answer.id} (${answer.confidence} confidence)`);
     } catch (e) {
-      setProposal(null);
+      // Kept on the gap rather than dropped, so the failure is where the
+      // operator is looking and the button is reachable again. Losing the
+      // proposal entirely is how this looked like a button that vanishes.
+      setProposal({ index, failed: e.message });
       updateStatus(`Could not ask the model: ${e.message}`);
     }
   };

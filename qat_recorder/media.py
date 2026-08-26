@@ -71,6 +71,23 @@ def _display() -> str:
     return os.environ.get("DISPLAY") or ":0"
 
 
+def _grabbers(display: str, path) -> list:
+    """Ways to photograph the whole screen, best first."""
+    return [
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab",
+         "-i", display, "-frames:v", "1", str(path)],
+        # ImageMagick. `-window root` is the whole screen, everything on it.
+        ["import", "-display", display, "-window", "root", str(path)],
+        ["scrot", "--overwrite", str(path)],
+        ["gnome-screenshot", "-f", str(path)],
+        ["spectacle", "-b", "-n", "-f", "-o", str(path)],
+    ]
+
+
+#: What is worth telling the operator about when only Qat is left.
+SCREEN_GRABBERS = ("ffmpeg", "import", "scrot", "gnome-screenshot", "spectacle")
+
+
 class SessionMedia:
     """Stills and video for one recording, in one directory."""
 
@@ -125,19 +142,28 @@ class SessionMedia:
         return shot
 
     def _grab_screen(self, path) -> bool:
-        """One frame of the whole display: popups, dialogs and all."""
-        if not os.environ.get("DISPLAY") or shutil.which("ffmpeg") is None:
+        """One frame of the whole display: popups, dialogs and all.
+
+        Several ways, because no single one is reliably present. ffmpeg is the
+        best answer and is also what films the session, but on RHEL and its
+        derivatives it lives in a third-party repository and is routinely
+        absent; ImageMagick and scrot are in the base repositories nearly
+        everywhere. Any of them gives the whole screen, which is the point.
+        """
+        if not os.environ.get("DISPLAY"):
             return False
-        try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-loglevel", "error",
-                 "-f", "x11grab", "-i", _display(), "-frames:v", "1",
-                 str(path)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=GRAB_TIMEOUT_S, check=False)
-        except Exception:                                    # noqa: BLE001
-            return False
-        return path.is_file() and path.stat().st_size > 0
+        for command in _grabbers(_display(), path):
+            if shutil.which(command[0]) is None:
+                continue
+            try:
+                subprocess.run(command, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               timeout=GRAB_TIMEOUT_S, check=False)
+            except Exception:                                # noqa: BLE001
+                continue
+            if path.is_file() and path.stat().st_size > 0:
+                return True
+        return False
 
     def _ask_qat(self, path) -> bool:
         """The application's own window. Better than nothing, worse than the screen."""
@@ -151,9 +177,12 @@ class SessionMedia:
             return False
         if not self.still_note:
             self.still_note = (
-                "stills are of the application's own window: ffmpeg is not "
-                "installed here, so pop-ups, menus and native dialogs stacked "
-                "over it are not in them")
+                "stills are of the application's own window only, because none "
+                "of " + ", ".join(SCREEN_GRABBERS) + " is installed here. "
+                "Pop-ups, menus, other tabs and native dialogs stacked over it "
+                "are not in them. Install one -- ImageMagick is in the base "
+                "repository of every distribution this runs on -- and stills "
+                "become the whole screen.")
         return True
 
     def take_numbered(self, prefix: str) -> str:
