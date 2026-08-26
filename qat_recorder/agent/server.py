@@ -517,17 +517,25 @@ class Agent:
 def _ui_build() -> str:
     """The hashed name of the JS bundle this agent serves, or "" if none.
 
-    Vite renames the bundle whenever its contents change, so this is a build
-    identity that needs no build step of its own to maintain.
+    Read out of index.html rather than found by listing the directory. The
+    listing is not authoritative: an install over an older one can leave bundles
+    behind, and picking the alphabetically last of several reported a build the
+    browser was never going to load -- which made the panel accuse a correctly
+    installed machine of being out of date.
+
+    index.html is what the browser actually fetches, so what it references is
+    what is actually running.
     """
     from pathlib import Path as _Path                       # noqa: PLC0415
+    import re as _re                                        # noqa: PLC0415
 
-    static = _Path(__file__).resolve().parents[1] / "web" / "static" / "assets"
+    index = _Path(__file__).resolve().parents[1] / "web" / "static" / "index.html"
     try:
-        newest = sorted(static.glob("index-*.js"))
+        head = index.read_text(encoding="utf-8", errors="replace")[:8192]
     except OSError:
         return ""
-    return newest[-1].name if newest else ""
+    found = _re.search(r"assets/(index-[A-Za-z0-9_\-]+\.js)", head)
+    return found.group(1) if found else ""
 
 
 def _host_name() -> str:

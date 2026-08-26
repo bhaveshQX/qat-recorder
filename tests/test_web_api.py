@@ -322,3 +322,34 @@ def test_giving_up_leaves_the_recording_paused(panel):
     answer = panel.command("cancel_repair")
     assert answer.json()["summary"]["arming"] is None
     assert panel.preview()["open_gaps"] == 1
+
+
+# --- which build is where --------------------------------------------------
+
+def test_the_agent_reports_the_bundle_its_index_actually_loads(tmp_path, monkeypatch):
+    """Read from index.html, not from a directory listing.
+
+    An install over an older one can leave bundles behind, and picking the
+    alphabetically last of several named a build the browser was never going to
+    load -- which made the panel accuse a correctly installed machine of being
+    out of date on every single connection.
+    """
+    from qat_recorder.agent import server as agent_server
+
+    static = tmp_path / "web" / "static"
+    (static / "assets").mkdir(parents=True)
+    for stale in ("index-AAAAAAAA.js", "index-ZZZZZZZZ.js", "index-Mmmmmmmm.js"):
+        (static / "assets" / stale).write_text("stale")
+    (static / "index.html").write_text(
+        '<!doctype html><script type="module" crossorigin '
+        'src="/static/assets/index-Mmmmmmmm.js"></script>')
+
+    monkeypatch.setattr(agent_server, "__file__",
+                        str(tmp_path / "agent" / "server.py"))
+    assert agent_server._ui_build() == "index-Mmmmmmmm.js"
+
+
+def test_health_carries_the_version_and_the_bundle(panel):
+    body = panel.client.get("/v1/health", headers=AUTH).json()
+    assert body["version"], "nothing said which build the VM is running"
+    assert body["ui_build"].startswith("index-")

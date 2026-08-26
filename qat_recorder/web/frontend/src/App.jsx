@@ -109,10 +109,25 @@ export default function App() {
       // Which build is actually running over there. A VM on an older wheel than
       // the panel expects makes every feature look broken at once, and nothing
       // used to say so.
+      //
+      // Only worth comparing when this page came from that same agent. Running
+      // `qat-recorder web-panel` on your own machine and connecting to a remote
+      // agent means two installs and two bundles by design -- warning about
+      // that accused correctly installed machines of being out of date, every
+      // single time they connected.
       const running = document.querySelector('script[src*="/static/assets/index-"]');
       const mine = running ? running.getAttribute('src').split('/').pop() : '';
-      setBuild({ agent: d.version || '?', ui: d.ui_build || '',
-                 mismatch: !!(mine && d.ui_build && mine !== d.ui_build) });
+      let servedByThisAgent = false;
+      try {
+        servedByThisAgent = new URL(cleanUrl).origin === window.location.origin;
+      } catch { /* an unparseable URL is not this origin */ }
+      setBuild({
+        agent: d.version || '?',
+        ui: d.ui_build || '',
+        mine,
+        servedByThisAgent,
+        mismatch: servedByThisAgent && !!(mine && d.ui_build && mine !== d.ui_build),
+      });
       if (d.default_lib) setLibPath(prev => prev || d.default_lib);
       
       // The agent may already be holding a recording -- the browser was
@@ -128,7 +143,12 @@ export default function App() {
       } else {
         updateStatus(`Connected to ${d.host || cleanUrl}`);
       }
-      setDetails(`Connected to ${d.host || 'agent'}\nProtocol v${d.protocol || '?'}`);
+      // Both builds, plainly, so a report of "it is behaving oddly" can quote
+      // them instead of us guessing which machine is out of date.
+      setDetails(`Connected to ${d.host || 'agent'}\n`
+               + `qat_recorder ${d.version || '?'}  ·  protocol v${d.protocol || '?'}\n`
+               + `UI on the agent: ${d.ui_build || 'not built'}\n`
+               + `UI in this page: ${mine || 'unknown'}`);
     } catch (e) {
       setConnected(false);
       setAgentHost('');
@@ -821,9 +841,9 @@ export default function App() {
 
       {build?.mismatch && (
         <div className="build-warning">
-          This panel was served by a different build than the agent is running
-          ({build.ui} on the agent). Reload with a hard refresh; if it persists,
-          the wheel on that machine is older than this UI and needs reinstalling.
+          This page is running <code>{build.mine}</code> but the agent that
+          served it now has <code>{build.ui}</code>. That is a stale cached page:
+          reload with a hard refresh (Ctrl-Shift-R).
         </div>
       )}
 
