@@ -827,7 +827,7 @@ export default function App() {
                         {media.stills.map(name => (
                           <div key={name} title={name}>
                             <MediaImage base={agentUrl} sid={sessionId}
-                                        name={name} token={token} alt={name} />
+                                        name={name} token={token} alt={name} thumb />
                           </div>
                         ))}
                       </div>

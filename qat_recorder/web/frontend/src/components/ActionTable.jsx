@@ -13,7 +13,7 @@ function StepShot({ shot, onOpen }) {
     <button type="button" className="step-shot"
             title="what was on screen — click to enlarge"
             onClick={(event) => { event.stopPropagation(); if (onOpen) onOpen(shot); }}>
-      <MediaImage {...shot} alt="the screen for this step" />
+      <MediaImage {...shot} thumb alt="the screen for this step" />
     </button>
   );
 }

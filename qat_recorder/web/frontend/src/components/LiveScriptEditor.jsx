@@ -70,6 +70,16 @@ function whyNoFix(data, canPoint) {
          + 'about it — which is what closing means, and why nothing matched. '
          + 'The recorder did catch the name it was closed under.';
   }
+  if (data.usable === 0) {
+    return 'Nothing the recorder found here can be addressed durably, so there '
+         + 'is nothing to choose between — a model would only be able to '
+         + 'refuse, which is what it did. '
+         + (canPoint
+            ? 'Point at the control instead: pointing resolves it live, which '
+              + 'is a different question from picking off a list.'
+            : 'Write the step yourself, or record again and point at it while '
+              + 'the application is up.');
+  }
   // What to do about it depends on whether the application is still running.
   // Telling somebody to point at a control while the Point at it button is not
   // even rendered -- because the recording has stopped and there is nothing
@@ -208,7 +218,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
           <button type="button" className="drop-gap-shot"
                   title="what was on screen when this event was lost — click to enlarge"
                   onClick={() => onOpenShot && onOpenShot(shot)}>
-            <MediaImage {...shot} alt="the screen when the event was lost" />
+            <MediaImage {...shot} thumb alt="the screen when the event was lost" />
           </button>
         )}
         {fix && fix.needsText && (
@@ -281,7 +291,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
             </button>
           )
         )}
-        {llmReady && !armed && !someoneElseArmed && !mine && (
+        {llmReady && !armed && !someoneElseArmed && !mine && data.usable > 0 && (
           <button
             className="btn btn-accent btn-sm"
             disabled={busy}

@@ -77,6 +77,47 @@ def _display() -> str:
     return os.environ.get("DISPLAY") or ":0"
 
 
+def _thumb_path(path):
+    """Where the small copy of a still lives, beside the full one."""
+    return path.with_suffix(".thumb.png")
+
+
+def _write_thumbnail(tools, frame, path, across: int = 320) -> None:
+    """A small copy, by taking every Nth pixel.
+
+    The actions table shows one of these per step at seventy pixels wide. Sending
+    the full screen for that is what made the panel crawl: a 1920x1200 still is
+    around 150 kB, so a fifty-step session was seven megabytes of thumbnails --
+    fetched over a tunnel, and decoded at full size to be drawn tiny.
+
+    Nearest-neighbour, in Python, on the raw frame that has just been grabbed:
+    no decode, no image library, no new dependency. It is not a good downscale
+    and it does not need to be -- it needs to be recognisable at seventy pixels,
+    and to be about one per cent of the bytes.
+    """
+    width, height = frame.size
+    if width <= across:
+        return
+    step = max(1, width // across)
+    small_w, small_h = width // step, height // step
+    if small_w < 2 or small_h < 2:
+        return
+
+    source = frame.rgb
+    out = bytearray(small_w * small_h * 3)
+    at = 0
+    for row in range(small_h):
+        base = (row * step) * width * 3
+        for column in range(small_w):
+            pixel = base + (column * step) * 3
+            out[at:at + 3] = source[pixel:pixel + 3]
+            at += 3
+    try:
+        tools.to_png(bytes(out), (small_w, small_h), output=str(path))
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def _grabbers(display: str, path) -> list:
     """Ways to photograph the whole screen, best first."""
     return [
@@ -185,6 +226,7 @@ class SessionMedia:
                 # them -- a VM with two heads still gives one picture.
                 frame = camera.grab(camera.monitors[0])
                 mss.tools.to_png(frame.rgb, frame.size, output=str(path))
+                _write_thumbnail(mss.tools, frame, _thumb_path(path))
         except Exception:                                    # noqa: BLE001
             return False
         return path.is_file() and path.stat().st_size > 0
@@ -244,9 +286,12 @@ class SessionMedia:
         screen. Photographing it twice costs a file and tells nobody anything,
         so within SAME_SCREEN_S the previous still is what the second gap gets.
         """
+        # No reuse. Sharing one picture between gaps a second apart saved a file
+        # and made the mapping a lie: the second gap showed the screen the first
+        # one happened on, which is exactly the thing a still is there to settle.
+        # Gaps are rare now that deliberate non-steps are not counted as gaps,
+        # so each can afford its own.
         now = time.monotonic()
-        if self._last_shot and now - self._last_shot_at <= SAME_SCREEN_S:
-            return self._last_shot
         if self._shots >= MAX_STILLS:
             self.still_note = (
                 f"stopped after {MAX_STILLS} stills; the gaps are still "
@@ -328,7 +373,8 @@ class SessionMedia:
     def stills(self) -> list:
         if not self.shots_dir.is_dir():
             return []
-        return sorted(path.name for path in self.shots_dir.glob("*.png"))
+        return sorted(path.name for path in self.shots_dir.glob("*.png")
+                      if not path.name.endswith(".thumb.png"))
 
     # -- video -------------------------------------------------------------
 

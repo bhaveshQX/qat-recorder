@@ -205,15 +205,6 @@ def test_a_gap_that_cannot_be_photographed_is_not_retried(controller, tmp_path, 
         "the camera was asked again for a gap it had already failed on")
 
 
-def test_gaps_in_the_same_second_share_one_picture(tmp_path):
-    """Six unnamed check boxes in one dialog are six gaps looking at one screen."""
-    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
-    names = [media.take_for_gap(f"gap-{n}") for n in range(6)]
-
-    assert len(set(names)) == 1, "six identical photographs of the same screen"
-    assert len(media.stills()) == 1
-
-
 def test_a_gap_much_later_gets_its_own_picture(tmp_path, monkeypatch):
     media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
     clock = [1000.0]
@@ -349,3 +340,47 @@ def test_per_step_capture_can_be_turned_off(tmp_path):
     assert media.stills() == []
     # Gaps are a different question and still get one.
     assert media.take_for_gap("gap-0")
+
+
+# --- small copies, so the panel is not sent the screen fifty times ---------
+
+def test_a_still_is_written_with_a_small_copy_beside_it(tmp_path):
+    """The actions table shows one per step at seventy pixels wide.
+
+    Sending the full screen for that is what made the panel crawl: a fifty-step
+    session was seven megabytes of thumbnails, fetched over a tunnel and decoded
+    at full size to be drawn tiny.
+    """
+    import os
+    if not (os.environ.get("DISPLAY") or os.name == "nt"):
+        pytest.skip("no display to photograph")
+
+    media = SessionMedia(tmp_path, record_video=False)
+    name = media.take("one")
+    assert name
+
+    full = (tmp_path / "shots" / name)
+    thumb = (tmp_path / "shots" / name.replace(".png", ".thumb.png"))
+    assert thumb.exists(), "no small copy was written"
+    assert thumb.stat().st_size < full.stat().st_size / 5, (
+        "the small copy is not appreciably smaller")
+    assert thumb.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_the_listing_does_not_repeat_the_small_copies(tmp_path):
+    import os
+    if not (os.environ.get("DISPLAY") or os.name == "nt"):
+        pytest.skip("no display to photograph")
+
+    media = SessionMedia(tmp_path, record_video=False)
+    media.take("one")
+    assert media.stills() == ["one.png"]
+
+
+def test_two_gaps_close_together_get_their_own_pictures(tmp_path):
+    """Sharing one made the mapping a lie: the second gap showed the screen the
+    first one happened on, which is the thing a still exists to settle."""
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
+    first = media.take_for_gap("gap-0")
+    second = media.take_for_gap("gap-1")
+    assert first and second and first != second

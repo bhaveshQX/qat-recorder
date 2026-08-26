@@ -379,6 +379,11 @@ def _drop_marker(index: int, drop) -> str:
         # A window that was closed cannot be looked for, so this is the one
         # repair offered without a check. The panel says so before it is taken.
         "closed_as": (drop.evidence or {}).get("closed_proposal") or None,
+        # How many of the objects the recorder found can actually become a step.
+        # Nought means there is nothing for anybody to choose between, and
+        # asking a model produces a considered refusal every time.
+        "usable": len([one for one in (drop.evidence or {}).get("candidates", ())
+                       if one.get("target")]),
         "grade": drop.suggestion.get("robustness", ""),
         "fix_label": drop.suggestion.get("label", ""),
     }, ensure_ascii=False)

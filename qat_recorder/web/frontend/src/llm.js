@@ -83,7 +83,10 @@ function describe(pack, kind, label, reason, around) {
     ``,
   ].filter(Boolean);
 
-  for (const candidate of pack.candidates || []) {
+  // Only the ones that can become a step. Listing an object the recorder cannot
+  // address invites an answer nobody can act on.
+  const usable = (pack.candidates || []).filter(one => one.target);
+  for (const candidate of usable) {
     const props = candidate.properties || {};
     const shown = Object.entries(props)
       .filter(([, v]) => v !== '' && v !== null)
@@ -100,6 +103,9 @@ function describe(pack, kind, label, reason, around) {
     lines.push(`    addressable as: ${candidate.target
       ? JSON.stringify(candidate.target.definition) + `  (${candidate.robustness})`
       : 'nothing durable — this one cannot be addressed'}`);
+  }
+  if (!usable.length) {
+    lines.push('(none of them can be addressed durably)');
   }
   if (pack.truncated) lines.push(`(there were more of these than are listed)`);
   return lines.join('\n');
@@ -192,10 +198,20 @@ export async function chooseCandidate(settings, pack, meta, imageDataUrl) {
   const parsed = parseAnswer(said);
   if (!parsed) throw new Error(`could not read the answer: ${said.slice(0, 200)}`);
 
-  // Only an id that is actually in the pack. A model naming a candidate that
-  // does not exist is the one failure this design has to refuse outright.
-  if (parsed.id !== null && !(pack.candidates || []).some(c => c.id === parsed.id)) {
-    throw new Error(`answered with id ${parsed.id}, which is not one of the candidates`);
+  // Only an id that is in the pack, and only one that can actually be used.
+  // Existing was not enough: a candidate with no resolved Target cannot be
+  // turned into a step, so accepting that answer produced a proposal whose
+  // "Use it" failed with the error in the status bar and the gap unchanged --
+  // which read as a button that does nothing.
+  if (parsed.id !== null) {
+    const chosen = (pack.candidates || []).find(one => one.id === parsed.id);
+    if (!chosen) {
+      throw new Error(`answered with id ${parsed.id}, which is not one of the candidates`);
+    }
+    if (!chosen.target) {
+      throw new Error(`chose id ${parsed.id}, which this application gave no `
+                    + `durable way to address, so it cannot become a step`);
+    }
   }
   return { ...parsed, usedImage: !!withImage };
 }

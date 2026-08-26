@@ -75,12 +75,23 @@ export function mediaUrl(base, sid, name, token) {
  * and handed to the <img> as a blob, it works on a tunnel, on a LAN address and
  * on loopback alike.
  */
-export async function fetchMedia(base, sid, name, token) {
-  const response = await fetch(
-    `${base}/v1/sessions/${sid}/media/${encodeURIComponent(name)}`,
-    { headers: headers(token) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return URL.createObjectURL(await response.blob());
+export async function fetchMedia(base, sid, name, token, thumb = false) {
+  const one = async (which) => {
+    const response = await fetch(
+      `${base}/v1/sessions/${sid}/media/${encodeURIComponent(which)}`,
+      { headers: headers(token) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return URL.createObjectURL(await response.blob());
+  };
+  if (thumb) {
+    // The small copy written beside the still. Falling back rather than
+    // failing: a session recorded before these existed, or one photographed
+    // through a fallback grabber, has only the full-size one.
+    try {
+      return await one(name.replace(/\.png$/, '.thumb.png'));
+    } catch { /* the full one, then */ }
+  }
+  return one(name);
 }
 
 /** A still as a data: URL, which is how an OpenAI-compatible API takes an image. */
