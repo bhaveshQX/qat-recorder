@@ -62,6 +62,33 @@ function fixFor(data) {
   return null;
 }
 
+/** What this gap offers, and why -- in every case, not only the awkward ones.
+ *
+ * A button present on one gap and absent on the next, with nothing saying why,
+ * reads as a feature that works intermittently. It is not intermittent: it
+ * depends on whether the recorder found anything in the application it could
+ * address, and that is worth one sentence on every gap.
+ */
+function whatIsOnOffer(data, canPoint) {
+  const usable = data.usable ?? 0;
+  if (data.closed_as) {
+    return 'The window is gone, so nothing could be looked for — but the '
+         + 'recorder caught the name it was closed under, and closing it by '
+         + 'that name is offered above.';
+  }
+  if (usable === 0) {
+    return 'The recorder found nothing here it can address, so there is nothing '
+         + 'to choose between and no model can help — it could only refuse. '
+         + (canPoint
+            ? 'Point at the control instead: that resolves it live, which is a '
+              + 'different question from picking off a list.'
+            : 'Write the step yourself, or record again and point at it while '
+              + 'the application is still up.');
+  }
+  return `${usable} object${usable === 1 ? '' : 's'} here can be addressed, so `
+       + 'the model has something to choose between.';
+}
+
 /** Why there is no one-click fix, in the operator's terms. */
 function whyNoFix(data, canPoint) {
   if (data.checked) return '';
@@ -161,14 +188,12 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
                 + '— nothing you do now is recorded. When you are in front of '
                 + 'it, press "It is on screen now".'}
           </div>
-        ) : why ? (
-          <div className="drop-gap-note">{why}</div>
-        ) : canPoint ? (
+        ) : (
           <div className="drop-gap-note">
-            Or point at it, and the recorder identifies it the way it identifies
-            every other step.
+            {why ? `${why} ` : ''}
+            {whatIsOnOffer(data, canPoint)}
           </div>
-        ) : null}
+        )}
         {mine && (
           proposal.thinking ? (
             <div className="drop-gap-waiting">Asking the model…</div>

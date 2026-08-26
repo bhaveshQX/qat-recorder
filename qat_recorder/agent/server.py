@@ -438,11 +438,41 @@ class Agent:
             gaps = [dict(drop.to_dict(), index=index)
                     for index, drop in enumerate(recording.drops)]
 
+            # The steps, authoritatively, in the order the recording has them.
+            #
+            # The panel used to accumulate this from the event stream, which is
+            # append-only -- and a repair *inserts* a step in the middle. From
+            # the first repair onwards the browser's list was a different list
+            # in a different order, so every picture after that point belonged
+            # to the wrong step. There is one source of truth for this and it
+            # is here.
+            from qat_recorder.ir import ActionKind             # noqa: PLC0415
+
+            holder = getattr(session.controller, "media", None)
+            taken = set(holder.stills()) if holder is not None else set()
+            steps = []
+            for index, action in enumerate(recording.actions):
+                if action.kind is ActionKind.LAUNCH:
+                    continue          # bookkeeping, not something anybody did
+                target = action.target
+                steps.append({
+                    "index": index,
+                    "kind": action.kind.value,
+                    "note": action.note,
+                    "shot": action.shot if action.shot in taken else "",
+                    "target": {
+                        "label": target.label if target else "",
+                        "robustness": target.robustness.value if target else "",
+                        "definition": dict(target.definition) if target else {},
+                    } if target else None,
+                })
+
             return {
                 "script": script,
                 "dropped": dropped,
                 "failures": failures_list,
                 "gaps": gaps,
+                "steps": steps,
                 "open_gaps": len([one for one in gaps if not one["repaired"]]),
             }
 

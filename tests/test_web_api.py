@@ -391,3 +391,68 @@ def test_a_request_does_not_wait_for_the_pump(panel):
     assert answer.status_code == 200
     assert elapsed < 2.0, (
         f"a request took {elapsed:.1f}s while the lock was held elsewhere")
+
+
+# --- the steps, and which picture belongs to which -------------------------
+
+def test_the_steps_come_from_the_recording_not_from_the_stream(panel):
+    """The panel used to accumulate these from the event stream, which is
+    append-only -- and a repair *inserts* a step in the middle.
+
+    From the first repair onwards the browser's list was a different list in a
+    different order, so every picture after that point belonged to the wrong
+    step. There is one source of truth and this is it.
+    """
+    _with_a_gap(panel)
+    # ...and a step after the gap, so filling it is genuinely an insert.
+    panel.push(*click_pair(500, "QPushButton", "loginButton"))
+    before = panel.preview()["steps"]
+    assert len(before) == 2
+    assert all("index" in step for step in before)
+    assert all(step["kind"] != "launch" for step in before), (
+        "the launch is bookkeeping, not something anybody did")
+
+    panel.command("repair_drop", index=0, code="qat.mouse_click({'text': 'X'})")
+    after = panel.preview()["steps"]
+
+    assert len(after) == 3
+    # Between the two clicks, where the event was lost -- not appended.
+    assert [step["kind"] for step in after] == ["click", "custom_code", "click"]
+    # And the indices still run in the recording's order, which is what a
+    # picture is looked up by.
+    assert [step["index"] for step in after] == sorted(
+        step["index"] for step in after)
+
+
+def test_a_step_carries_its_own_picture(panel, tmp_path):
+    """Looking a picture up by row number assumed the browser's list and the
+    recording's list were the same list."""
+    from qat_recorder.media import SessionMedia
+    from tests.test_media import FakeQat as ShootingQat
+
+    controller = panel.agent.session.controller
+    controller.media = SessionMedia(tmp_path / "session", record_video=False,
+                                    qat_module=ShootingQat())
+    panel.push(*click_pair(100, "QPushButton", "loginButton"))
+    controller.media.settle()
+
+    steps = panel.preview()["steps"]
+    assert steps, "no steps at all"
+    assert any(step["shot"] for step in steps), "no step carried a picture"
+
+
+def test_a_picture_is_not_named_until_it_exists(panel, tmp_path):
+    """A name is handed out the moment a step is folded, before the worker has
+    taken anything. Advertising it straight away had the panel asking for files
+    that did not exist yet."""
+    from qat_recorder.media import SessionMedia
+    from tests.test_media import FakeQat as ShootingQat
+
+    controller = panel.agent.session.controller
+    controller.media = SessionMedia(tmp_path / "session", record_video=False,
+                                    qat_module=ShootingQat())
+    panel.push(*click_pair(100, "QPushButton", "loginButton"))
+
+    for step in panel.preview()["steps"]:
+        if step["shot"]:
+            assert (tmp_path / "session" / "shots" / step["shot"]).is_file()

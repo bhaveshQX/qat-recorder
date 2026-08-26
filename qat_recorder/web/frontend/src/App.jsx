@@ -19,7 +19,7 @@ import LiveScriptEditor from './components/LiveScriptEditor';
 //: How long the panel waits for the steps to stop arriving before asking
 //: for the script again. Long enough to collapse a burst of clicking into
 //: one request, short enough that nobody notices the delay.
-const PREVIEW_DELAY_MS = 250;
+const PREVIEW_DELAY_MS = 400;
 
 const S = { IDLE: 'idle', RECORDING: 'recording', PAUSED: 'paused', PICKING: 'picking', STOPPED: 'stopped' };
 
@@ -62,6 +62,10 @@ export default function App() {
   const [isScriptEdited, setIsScriptEdited] = useState(false);
   const [droppedEvents, setDroppedEvents] = useState([]);
   const [gaps, setGaps] = useState([]);
+  // The steps as the recording has them. Accumulating these from the
+  // event stream went wrong the moment a repair inserted one in the
+  // middle: the browser's list was append-only and diverged for good.
+  const [steps, setSteps] = useState([]);
   const [media, setMedia] = useState({ stills: [], video: '', gap_shots: {} });
   
   // ── modals ───────────────────────────────────────────
@@ -89,6 +93,7 @@ export default function App() {
 
   const wsRef = useRef(null);
   const gapsRef = useRef(null);
+  const lastFetch = useRef(0);
 
   // ── helpers ────────────────────────────────────────
   const isStep = (a) => a.kind !== 'launch';
@@ -103,8 +108,11 @@ export default function App() {
   };
   // The actions table is indexed over the steps the panel shows, which leaves
   // out the launch; the recording counts it. Hence the offset.
+  // From the step itself, which carries its own picture. Looking it up by row
+  // number assumed the browser's list and the recording's list were the same
+  // list; a single repair made them different for the rest of the session.
   const shotForStep = (row) => {
-    const name = media.step_shots?.[String(row + 1)];
+    const name = steps[row]?.shot;
     return name ? { base: agentUrl, sid: sessionId, name, token } : null;
   };
 
@@ -638,19 +646,28 @@ export default function App() {
   useEffect(() => {
     if (!sessionId) return undefined;
     let live = true;
+    // Not a plain debounce. That restarts its timer on every step, so a session
+    // where steps keep arriving never reaches the trailing edge -- the panel
+    // simply stops updating until the operator pauses, or clicks something to
+    // shake it loose. This fires at once when it is due and otherwise waits out
+    // the remainder, so the ceiling is real: never more than PREVIEW_DELAY_MS
+    // behind, however fast the steps come.
+    const due = Math.max(0, lastFetch.current + PREVIEW_DELAY_MS - Date.now());
     const timer = setTimeout(() => {
+      lastFetch.current = Date.now();
       api.preview(agentUrl, sessionId, token)
         .then(res => {
           if (!live) return;
           setScriptText(res.script || '');
           setDroppedEvents(res.failures || []);
           setGaps(res.gaps || []);
+          if (res.steps) setSteps(res.steps);
         })
         .catch(e => console.error('Preview failed:', e));
       api.media(agentUrl, sessionId, token)
         .then(res => { if (live) setMedia(res); })
         .catch(() => {/* an agent too old to keep media is not an error */});
-    }, PREVIEW_DELAY_MS);
+    }, due);
     return () => { live = false; clearTimeout(timer); };
   }, [actions, sessionId, agentUrl, token, refreshTick]);
 
@@ -706,7 +723,7 @@ export default function App() {
 
                 <div className={`tab-content ${activeTab === 'session' ? 'active' : ''}`}>
                   <ActionTable
-                    actions={actions}
+                    actions={steps.length ? steps : actions}
                     selectedRow={selectedRow}
                     onSelect={selectAction}
                     shotForStep={shotForStep}
