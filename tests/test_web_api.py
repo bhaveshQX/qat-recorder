@@ -353,3 +353,41 @@ def test_health_carries_the_version_and_the_bundle(panel):
     body = panel.client.get("/v1/health", headers=AUTH).json()
     assert body["version"], "nothing said which build the VM is running"
     assert body["ui_build"].startswith("index-")
+
+
+# --- the panel must not be stalled by the recorder -------------------------
+
+def test_a_request_does_not_wait_for_the_pump(panel):
+    """Every agent call takes the session lock, and the pump holds it while it
+    folds events.
+
+    Waiting for it inside an `async def` blocks the whole event loop -- and the
+    WebSocket that streams steps to the panel with it. One slow poll stalled
+    everything at once, which is how a recording could finish before the panel
+    had shown any of it.
+    """
+    import threading
+    import time as clock
+
+    session = panel.agent.session
+    held = threading.Event()
+    release = threading.Event()
+
+    def hog():
+        with session.lock:
+            held.set()
+            release.wait(3.0)
+
+    threading.Thread(target=hog, daemon=True).start()
+    assert held.wait(2.0), "could not take the session lock"
+
+    # Health does not touch the session lock, so it must answer immediately even
+    # while something else is holding it.
+    started = clock.perf_counter()
+    answer = panel.client.get("/v1/health", headers=AUTH)
+    elapsed = clock.perf_counter() - started
+    release.set()
+
+    assert answer.status_code == 200
+    assert elapsed < 2.0, (
+        f"a request took {elapsed:.1f}s while the lock was held elsewhere")

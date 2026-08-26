@@ -33,6 +33,9 @@ export default function MediaImage({ base, sid, name, token, alt, className,
   }, [base, sid, name, token, thumb]);
 
   if (failed) {
+    // A picture that has not been taken yet is not a failure worth shouting
+    // about -- the listing that named it is refetched a moment later.
+    if (failed.includes('404')) return <span className="col-shot-none">—</span>;
     return <div className="media-failed">could not load {name}: {failed}</div>;
   }
   if (!url) return <div className="media-loading">loading {name}…</div>;

@@ -280,46 +280,40 @@ class SessionMedia:
         return self.take(f"{prefix}-{self._shots:03d}")
 
     def take_for_gap(self, prefix: str) -> str:
-        """A picture of the screen a gap happened on -- or the last one.
+        """A picture of the screen a gap happened on.
 
-        Two gaps a few hundred milliseconds apart are looking at the same
-        screen. Photographing it twice costs a file and tells nobody anything,
-        so within SAME_SCREEN_S the previous still is what the second gap gets.
+        Queued, not taken here. This runs inside the poll loop, which holds the
+        session lock, and grabbing and encoding a 1920x1200 screen takes the
+        better part of a second. Every HTTP request waits on that same lock, so
+        one gap used to stall the panel's entire connection -- including the
+        socket feeding it the steps. That is how a recording could finish before
+        the panel had shown any of it.
+
+        Each gap gets its own picture. Sharing one between gaps a second apart
+        saved a file and made the mapping a lie: the second showed the screen
+        the first happened on, which is the one thing a still exists to settle.
         """
-        # No reuse. Sharing one picture between gaps a second apart saved a file
-        # and made the mapping a lie: the second gap showed the screen the first
-        # one happened on, which is exactly the thing a still is there to settle.
-        # Gaps are rare now that deliberate non-steps are not counted as gaps,
-        # so each can afford its own.
-        now = time.monotonic()
-        if self._shots >= MAX_STILLS:
-            self.still_note = (
-                f"stopped after {MAX_STILLS} stills; the gaps are still "
-                "recorded, they just have no picture")
-            return ""
-        name = self.take_numbered(prefix)
-        if name:
-            self._last_shot, self._last_shot_at = name, now
-        return name
+        return self._enqueue(f"{prefix}-{self._shots:03d}")
 
-    # -- one per step, without making the recorder wait ---------------------
+    # -- taken behind the pump, never in front of it ------------------------
 
     def capture_async(self, name: str) -> str:
-        """Photograph the screen behind the pump, and return the name now.
+        """Photograph the screen for a step, and return the name now.
 
-        A step is folded inside the poll loop, and the loop is what keeps the
-        panel's picture of the session current. Grabbing and PNG-encoding a
-        1920x1200 screen takes long enough that doing it there, once per click,
-        would make recording visibly lag -- and a recorder that stutters while
-        somebody is working is worse than one that takes no pictures.
-
-        So the name is decided immediately and the work happens on one worker
-        thread. If that thread is already behind, the shot is skipped rather
-        than queued: falling further behind the operator helps nobody, and a
-        step without a picture costs nothing.
+        A step is folded inside the poll loop, and that loop is what keeps the
+        panel's picture of the session current. Nothing slow may happen in it.
         """
         if not self.capture_steps:
             return ""
+        return self._enqueue(name)
+
+    def _enqueue(self, name: str) -> str:
+        """Decide the name now; let the worker do the work.
+
+        If the worker is already behind, the shot is skipped rather than queued.
+        Falling further behind the operator helps nobody, and a step without a
+        picture costs almost nothing.
+        """
         if self._shots >= MAX_STILLS:
             self.still_note = (
                 f"stopped after {MAX_STILLS} stills; the steps and gaps are all "
@@ -354,7 +348,9 @@ class SessionMedia:
             try:
                 self.shots_dir.mkdir(parents=True, exist_ok=True)
                 path = self.shots_dir / shot
-                self._grab_with_mss(path) or self._grab_screen(path)                     or self._ask_qat(path)
+                if not self._grab_with_mss(path):
+                    if not self._grab_screen(path):
+                        self._ask_qat(path)
             except Exception:                                # noqa: BLE001
                 pass
             finally:

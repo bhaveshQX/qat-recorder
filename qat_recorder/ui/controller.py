@@ -227,6 +227,7 @@ class RecorderController:
             # Let the queued stills finish, so a session that is saved straight
             # after stopping is not missing the last few.
             self.media.settle()
+            self._forget_missing_stills()
 
         if self._receiver is not None:
             self._receiver.stop()
@@ -460,6 +461,22 @@ class RecorderController:
         self._photograph_new_steps()
         self._photograph_new_gaps()
         return handled
+
+    def _forget_missing_stills(self) -> None:
+        """Drop the names of pictures that never arrived.
+
+        A name is handed out the moment a step is folded, before the worker has
+        taken anything -- that is what keeps the recorder from waiting on a
+        camera. Some of those never become files: the queue was full, the screen
+        could not be grabbed. Leaving the name behind would put a broken picture
+        in the panel and a lie in recording.json.
+        """
+        if self.media is None or self.recording is None:
+            return
+        shots = self.media.shots_dir
+        for item in list(self.recording.actions) + list(self.recording.drops):
+            if item.shot and not (shots / item.shot).is_file():
+                item.shot = ""
 
     def _photograph_new_steps(self) -> None:
         """A picture of the screen for each step, as it is folded.

@@ -16,6 +16,11 @@ import KeepModal from './components/KeepModal';
 import LiveScriptEditor from './components/LiveScriptEditor';
 
 // States mirror qat_recorder.ui.controller.State
+//: How long the panel waits for the steps to stop arriving before asking
+//: for the script again. Long enough to collapse a burst of clicking into
+//: one request, short enough that nobody notices the delay.
+const PREVIEW_DELAY_MS = 250;
+
 const S = { IDLE: 'idle', RECORDING: 'recording', PAUSED: 'paused', PICKING: 'picking', STOPPED: 'stopped' };
 
 export default function App() {
@@ -624,18 +629,29 @@ export default function App() {
   const idle      = state === S.IDLE || state === S.STOPPED;
   const setupCollapsed = !idle;
 
+  // Fetched on a leash. A step arriving used to trigger a full preview *and* a
+  // media listing, so clicking quickly through an application meant a request
+  // pair per click, each one queueing behind the session lock the pump holds.
+  // Nobody can read a script that is being rewritten several times a second
+  // anyway; a fifth of a second late is imperceptible and costs a fraction of
+  // the traffic.
   useEffect(() => {
-    if (!sessionId) return;
-    api.preview(agentUrl, sessionId, token)
-      .then(res => {
-        setScriptText(res.script || '');
-        setDroppedEvents(res.failures || []);
-        setGaps(res.gaps || []);
-      })
-      .catch(e => console.error("Preview failed:", e));
-    api.media(agentUrl, sessionId, token)
-      .then(setMedia)
-      .catch(() => {/* an agent too old to keep media is not an error */});
+    if (!sessionId) return undefined;
+    let live = true;
+    const timer = setTimeout(() => {
+      api.preview(agentUrl, sessionId, token)
+        .then(res => {
+          if (!live) return;
+          setScriptText(res.script || '');
+          setDroppedEvents(res.failures || []);
+          setGaps(res.gaps || []);
+        })
+        .catch(e => console.error('Preview failed:', e));
+      api.media(agentUrl, sessionId, token)
+        .then(res => { if (live) setMedia(res); })
+        .catch(() => {/* an agent too old to keep media is not an error */});
+    }, PREVIEW_DELAY_MS);
+    return () => { live = false; clearTimeout(timer); };
   }, [actions, sessionId, agentUrl, token, refreshTick]);
 
   return (

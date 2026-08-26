@@ -121,6 +121,19 @@ def create_app(agent, token: str = "") -> FastAPI:
     def _envelope(payload: dict) -> dict:
         return envelope(payload)
 
+    async def _offload(func, *args, **kwargs):
+        """Run an Agent call on a worker thread, not on the event loop.
+
+        Every one of these takes the session lock, and the pump holds that lock
+        while it folds events. Waiting for it inside an `async def` blocks the
+        whole loop -- including the WebSocket that streams steps to the panel --
+        so one slow poll stalled everything at once and the panel appeared to
+        freeze while the recording carried on without it.
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: _handle(func, *args, **kwargs))
+
     def _handle(func, *args, **kwargs):
         """Call an Agent method and translate AgentError to HTTP status."""
         try:
@@ -147,7 +160,7 @@ def create_app(agent, token: str = "") -> FastAPI:
 
     @app.get("/v1/health")
     async def health(_auth=Authenticated):
-        return _handle(agent.health)
+        return await _offload(agent.health)
 
     @app.get("/v1/applications")
     async def applications(_auth=Authenticated):
@@ -155,7 +168,7 @@ def create_app(agent, token: str = "") -> FastAPI:
 
     @app.get("/v1/sessions")
     async def current_session(_auth=Authenticated):
-        return _handle(agent.current)
+        return await _offload(agent.current)
 
     @app.post("/v1/sessions", status_code=201)
     async def start_session(body: StartSessionRequest, _auth=Authenticated):
@@ -179,24 +192,25 @@ def create_app(agent, token: str = "") -> FastAPI:
 
     @app.post("/v1/sessions/{session_id}/command")
     async def command(session_id: str, body: CommandRequest, _auth=Authenticated):
-        return _handle(agent.command, session_id, body.command, body.args)
+        return await _offload(agent.command, session_id, body.command, body.args)
 
     @app.post("/v1/sessions/{session_id}/artifacts")
     async def artifacts(session_id: str, body: Optional[ArtifactsRequest] = None, _auth=Authenticated):
         custom_script = body.custom_script if body else None
-        return _handle(agent.artifacts, session_id, custom_script=custom_script)
+        return await _offload(agent.artifacts, session_id,
+                              custom_script=custom_script)
 
     @app.get("/v1/sessions/{session_id}/preview")
     async def preview(session_id: str, _auth=Authenticated):
-        return _handle(agent.preview, session_id)
+        return await _offload(agent.preview, session_id)
 
     @app.get("/v1/sessions/{session_id}/gaps/{index}/evidence")
     async def evidence(session_id: str, index: int, _auth=Authenticated):
-        return _handle(agent.evidence, session_id, index)
+        return await _offload(agent.evidence, session_id, index)
 
     @app.get("/v1/sessions/{session_id}/media")
     async def media(session_id: str, _auth=Authenticated):
-        return _handle(agent.media, session_id)
+        return await _offload(agent.media, session_id)
 
     @app.get("/v1/sessions/{session_id}/media/{name}")
     async def media_file(session_id: str, name: str, request: Request,
@@ -239,11 +253,11 @@ def create_app(agent, token: str = "") -> FastAPI:
 
     @app.delete("/v1/sessions/{session_id}")
     async def release(session_id: str, _auth=Authenticated):
-        return _handle(agent.release, session_id)
+        return await _offload(agent.release, session_id)
 
     @app.get("/v1/tests")
     async def tests(app_name: str = Query("", alias="app"), _auth=Authenticated):
-        return _handle(agent.tests, app_name)
+        return await _offload(agent.tests, app_name)
 
     @app.post("/v1/tests/run")
     async def run_test(body: RunTestRequest, _auth=Authenticated):
@@ -267,7 +281,12 @@ def create_app(agent, token: str = "") -> FastAPI:
         try:
             while True:
                 try:
-                    data = agent.events(session_id, since=cursor, wait=1.0)
+                    # On a worker as well: this takes the session lock, and
+                    # holding up the loop here is holding up the socket it is
+                    # trying to write to.
+                    data = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: agent.events(session_id, since=cursor,
+                                                   wait=1.0))
                 except AgentError:
                     await asyncio.sleep(1.0)
                     continue

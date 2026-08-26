@@ -134,6 +134,7 @@ def test_every_gap_is_photographed(controller, tmp_path):     # noqa: F811
     controller.media = SessionMedia(tmp_path, qat_module=FakeQat(),
                                     record_video=False)
     _record_a_gap(controller)
+    controller.media.settle()
 
     drop, = controller.recording.drops
     assert drop.shot, "the gap has no picture of the screen"
@@ -147,6 +148,7 @@ def test_a_gap_is_photographed_once(controller, tmp_path):    # noqa: F811
     first = controller.recording.drops[0].shot
     controller.poll()
     controller.poll()
+    controller.media.settle()
     assert controller.recording.drops[0].shot == first
     assert len(controller.media.stills()) == 1
 
@@ -155,9 +157,15 @@ def test_a_failed_screenshot_does_not_stop_the_recording(controller, tmp_path, n
     controller.media = SessionMedia(tmp_path, qat_module=FakeQat(works=False),
                                     record_video=False)
     _record_a_gap(controller)
-    assert controller.recording.drops[0].shot == ""
     assert controller.state is State.RECORDING
     assert len(controller.recording.actions) > 1, "the session kept recording"
+
+    # The name was handed out before the camera was asked -- that is what keeps
+    # the recorder from waiting on it. Stopping settles the queue and forgets
+    # the names that never became files, rather than leaving a broken picture
+    # in the panel and a lie in recording.json.
+    controller.stop()
+    assert controller.recording.drops[0].shot == ""
 
 
 def test_the_operator_can_ask_for_a_still(controller, tmp_path):  # noqa: F811
@@ -196,23 +204,25 @@ def test_a_gap_that_cannot_be_photographed_is_not_retried(controller, tmp_path, 
     controller.media = SessionMedia(tmp_path, qat_module=camera,
                                     record_video=False, capture_steps=False)
     _record_a_gap(controller)
+    controller.media.settle()
     attempts = len(camera.asked)
 
     for _ in range(20):
         controller.poll()
+    controller.media.settle()
 
     assert len(camera.asked) == attempts == 1, (
         "the camera was asked again for a gap it had already failed on")
 
 
-def test_a_gap_much_later_gets_its_own_picture(tmp_path, monkeypatch):
+def test_every_gap_gets_its_own_picture(tmp_path):
+    """No sharing, whatever the interval. A gap's still is the record of a
+    screen nobody can get back to, and lending it to the next gap makes both
+    of them wrong."""
     media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
-    clock = [1000.0]
-    monkeypatch.setattr("qat_recorder.media.time.monotonic", lambda: clock[0])
-
     first = media.take_for_gap("gap-0")
-    clock[0] += 60.0                      # a minute later, a different screen
     second = media.take_for_gap("gap-1")
+    media.settle()
 
     assert first and second and first != second
     assert len(media.stills()) == 2
@@ -384,3 +394,33 @@ def test_two_gaps_close_together_get_their_own_pictures(tmp_path):
     first = media.take_for_gap("gap-0")
     second = media.take_for_gap("gap-1")
     assert first and second and first != second
+
+
+def test_a_gap_still_is_queued_rather_than_taken_in_the_poll_loop(tmp_path):
+    """This runs inside the poll loop, which holds the session lock, and every
+    HTTP request waits on that lock.
+
+    Taking the picture here stalled the panel's whole connection -- including
+    the socket feeding it the steps -- for the better part of a second per gap.
+    """
+    import time as clock
+
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
+    started = clock.perf_counter()
+    name = media.take_for_gap("gap-0")
+    elapsed = clock.perf_counter() - started
+
+    assert name, "the gap got no picture at all"
+    assert elapsed < 0.1, (
+        f"take_for_gap blocked the poll loop for {elapsed * 1000:.0f}ms")
+    media.settle()
+    assert media.stills() == [name], "and the picture was never actually written"
+
+
+def test_gap_stills_are_taken_even_when_step_capture_is_off(tmp_path):
+    """They answer different questions: one is a convenience, the other is the
+    only record of a screen nobody can get back to."""
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False,
+                         capture_steps=False)
+    assert media.capture_async("step-000") == ""
+    assert media.take_for_gap("gap-0")

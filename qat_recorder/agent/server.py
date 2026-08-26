@@ -361,15 +361,23 @@ class Agent:
                 getattr(holder, "capture_steps", False))
             # One per step as well as one per gap, so the panel can put the
             # screen beside the line that produced it.
+            #
+            # Only the ones that have actually been written. A name is handed
+            # out the moment a step is folded, before the worker has taken
+            # anything -- that is what keeps the recorder from waiting on a
+            # camera -- so advertising it straight away had the panel asking for
+            # files that did not exist yet and filling the console with 404s.
+            # The listing is fetched again a moment later anyway.
+            arrived = set(described.get("stills") or ())
             described["step_shots"] = {
                 str(index): action.shot
                 for index, action in enumerate(
                     recording.actions if recording else [])
-                if action.shot}
+                if action.shot and action.shot in arrived}
             described["gap_shots"] = {
                 str(index): drop.shot
                 for index, drop in enumerate(recording.drops if recording else [])
-                if drop.shot}
+                if drop.shot and drop.shot in arrived}
             return described
 
     def evidence(self, session_id: str, index: int) -> dict:
