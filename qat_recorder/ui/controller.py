@@ -336,6 +336,44 @@ class RecorderController:
                 "made to address when the event was lost")
         return self._insert_repair(index, Target.from_dict(data), text)
 
+    def repair_closed(self, index: int) -> dict:
+        """Close the window using the name it was closed under.
+
+        The one repair that cannot be checked first, because the window is gone
+        by definition -- asking whether it is still there is asking whether it
+        closed. What the filter reported on the way out is all there is, and for
+        a dialog with its own objectName that is the strongest kind of locator
+        this project recognises; it simply has not been validated, and the step
+        says so where the next reader will see it.
+
+        The replay settles it in seconds. `save_as` runs the test once before it
+        enters the library, so a wrong guess here is caught immediately rather
+        than surviving into a suite.
+        """
+        if self._state not in self._EDITABLE:
+            raise ControllerError(f"cannot fill a gap while {self._state.value}")
+        recording = self.recording
+        if recording is None or not 0 <= index < len(recording.drops):
+            raise ControllerError(f"no gap at {index}")
+
+        from qat_recorder.ir import Target                     # noqa: PLC0415
+
+        drop = recording.drops[index]
+        proposal = (drop.evidence or {}).get("closed_proposal")
+        if not proposal:
+            raise ControllerError(
+                "the recorder was not told what this window was called, so "
+                "there is nothing to close by name")
+        target = Target(
+            definition=dict(proposal),
+            strategy="reported by the filter as the window closed",
+            robustness=Robustness.UNRESOLVED,
+            label=drop.label,
+            warnings=("the window had already closed, so this could not be "
+                      "checked against the application; the replay is what "
+                      "proves it",))
+        return self._insert_repair(index, target)
+
     def _insert_repair(self, index: int, target, text: str = "") -> dict:
         recording = self.recording
         drop = recording.drops[index]

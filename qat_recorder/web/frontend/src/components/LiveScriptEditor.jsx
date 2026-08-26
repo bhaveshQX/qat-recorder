@@ -65,6 +65,11 @@ function fixFor(data) {
 /** Why there is no one-click fix, in the operator's terms. */
 function whyNoFix(data, canPoint) {
   if (data.checked) return '';
+  if (data.closed_as) {
+    return 'This window had already closed by the time anything could be asked '
+         + 'about it — which is what closing means, and why nothing matched. '
+         + 'The recorder did catch the name it was closed under.';
+  }
   // What to do about it depends on whether the application is still running.
   // Telling somebody to point at a control while the Point at it button is not
   // even rendered -- because the recording has stopped and there is nothing
@@ -98,7 +103,8 @@ const GRADE_COLOUR = {
 function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
                               onWriteCode, canPoint, picking, arming, busy, shot,
                               onOpenShot, llmReady, onAskModel, proposal,
-                              onAcceptProposal, onDismissProposal }) {
+                              onAcceptProposal, onDismissProposal,
+                              onCloseWindow }) {
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
   const def = definitionFrom(data.seen);
@@ -118,6 +124,14 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
         <div className="drop-gap-reason">{data.reason}</div>
         {Object.keys(def).length > 0 && (
           <div className="drop-gap-seen">{JSON.stringify(def)}</div>
+        )}
+        {data.closed_as && (
+          <div className="drop-gap-note">
+            Closes it as <code>{JSON.stringify(data.closed_as)}</code>. This is the
+            one repair that cannot be checked first — the window is gone — so the
+            replay is what proves it. Keep runs the test once before it enters the
+            library, which is where a wrong name shows up.
+          </div>
         )}
         {fix && data.fix_label && (
           <div className="drop-gap-note">
@@ -209,6 +223,17 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
       </div>
 
       <div className="drop-gap-actions">
+        {data.closed_as && !armed && !someoneElseArmed && (
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={busy}
+            title={`inserts close() on ${JSON.stringify(data.closed_as)} — not checked, because the window is gone`}
+            onClick={() => onCloseWindow(data.index)}
+          >
+            Close it by name
+            <span style={{ color: 'var(--color-weak)', fontSize: 11 }}>(unchecked)</span>
+          </button>
+        )}
         {fix && (
           <button
             className="btn btn-primary btn-sm"
@@ -284,7 +309,7 @@ export default function LiveScriptEditor({ script, onChange, onApply, onPoint,
                                            shotFor, onOpenShot, canPoint, picking,
                                            arming, readOnly, busy, llmReady,
                                            onAskModel, proposal, onAcceptProposal,
-                                           onDismissProposal }) {
+                                           onDismissProposal, onCloseWindow }) {
   // Derived during render, not held in state. The script prop is the single
   // source of truth: an edit goes up through onChange and comes back down as
   // new text, so keeping a parsed copy in state only added a second render per
@@ -408,6 +433,7 @@ export default function LiveScriptEditor({ script, onChange, onApply, onPoint,
                 proposal={proposal}
                 onAcceptProposal={onAcceptProposal}
                 onDismissProposal={onDismissProposal}
+                onCloseWindow={onCloseWindow}
                 onCancelPoint={onCancelPoint}
                 onApply={onApply}
                 shot={shotFor ? shotFor(part.data.index) : null}

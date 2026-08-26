@@ -85,7 +85,8 @@ def _grabbers(display: str, path) -> list:
 
 
 #: What is worth telling the operator about when only Qat is left.
-SCREEN_GRABBERS = ("ffmpeg", "import", "scrot", "gnome-screenshot", "spectacle")
+SCREEN_GRABBERS = ("mss (in the wheel)", "ffmpeg", "import", "scrot",
+                   "gnome-screenshot", "spectacle")
 
 
 class SessionMedia:
@@ -136,10 +137,43 @@ class SessionMedia:
             return ""
         path = self.shots_dir / shot
 
-        if not (self._grab_screen(path) or self._ask_qat(path)):
+        if not (self._grab_with_mss(path)
+                or self._grab_screen(path)
+                or self._ask_qat(path)):
             return ""
         self._shots += 1
         return shot
+
+    def _grab_with_mss(self, path) -> bool:
+        """The whole screen, from Python, with no external programme at all.
+
+        This is the one that has to work, because every other way of
+        photographing a screen depends on something a locked-down VM may simply
+        not have: ffmpeg lives in a third-party repository on RHEL, ImageMagick
+        and scrot are packages somebody has to have installed, and Qat can only
+        photograph the widget tree it is attached to -- which is precisely not
+        the pop-up, the other tab or the dialog stacked over it.
+
+        mss calls XGetImage through ctypes. It ships in the wheel, needs no
+        compiler and no distribution package, and captures the display exactly
+        as it looks: every window, every menu, every native dialog.
+        """
+        if not (os.environ.get("DISPLAY") or os.name == "nt"):
+            return False
+        try:
+            import mss                                       # noqa: PLC0415
+            import mss.tools                                 # noqa: PLC0415
+
+            # mss.MSS on 10+, mss.mss on older releases the VM may have.
+            camera_class = getattr(mss, "MSS", None) or mss.mss
+            with camera_class() as camera:
+                # monitors[0] is the whole virtual screen, not the first of
+                # them -- a VM with two heads still gives one picture.
+                frame = camera.grab(camera.monitors[0])
+                mss.tools.to_png(frame.rgb, frame.size, output=str(path))
+        except Exception:                                    # noqa: BLE001
+            return False
+        return path.is_file() and path.stat().st_size > 0
 
     def _grab_screen(self, path) -> bool:
         """One frame of the whole display: popups, dialogs and all.

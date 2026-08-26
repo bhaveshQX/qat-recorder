@@ -7,7 +7,12 @@ name = "qat-recorder"
 version = "0.1.0"
 description = "Record-and-playback tooling built on Qat (Qt Application Tester)"
 requires-python = ">=3.9"
-dependencies = ["qat>=1.7", "fastapi>=0.100", "uvicorn[standard]>=0.20"]
+# mss photographs the screen through XGetImage with ctypes: no compiler, no
+# distribution package, and no ffmpeg -- which on RHEL lives in a repository
+# a locked-down VM will not have. It is what makes a still at a gap show the
+# pop-up that was over the application rather than the application.
+dependencies = ["qat>=1.7", "fastapi>=0.100", "uvicorn[standard]>=0.20",
+                "mss>=9"]
 
 [project.optional-dependencies]
 # `qat` is here as well as in dependencies on purpose: tests/test_generated_api.py

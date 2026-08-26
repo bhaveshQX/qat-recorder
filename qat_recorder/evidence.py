@@ -96,7 +96,8 @@ def _labels_near(backend, properties: Mapping[str, Any], limit: int = 4) -> list
             for distance, words, class_name in found[:limit]]
 
 
-def gather(backend, resolver, locator, reason: str = "") -> dict:
+def gather(backend, resolver, locator, reason: str = "",
+           kind: str = "") -> dict:
     """The evidence pack for one lost event.
 
     `candidates` are the objects of the same class the application actually has,
@@ -119,6 +120,22 @@ def gather(backend, resolver, locator, reason: str = "") -> dict:
         "candidates": [],
         "hit": -1,
     }
+    # A window closed from its title bar is gone by the time anything can be
+    # asked about it -- that is what closing means -- so there are never any
+    # candidates and every honest answer is "cannot identify it". But the filter
+    # named it on the way out, and a dialog with its own objectName is the
+    # strongest kind of locator this project has. It cannot be *checked*, which
+    # is a different objection from the usual one, and the replay settles it in
+    # seconds rather than leaving a gap nobody can ever fill.
+    if kind == "close_window":
+        proposed = {}
+        if class_name:
+            proposed["type"] = class_name
+        if locator.object_name:
+            proposed["objectName"] = locator.object_name
+        if proposed:
+            pack["closed_proposal"] = proposed
+
     if not class_name:
         return pack
 

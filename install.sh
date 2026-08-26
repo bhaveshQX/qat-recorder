@@ -231,9 +231,9 @@ cmd_vm() {
         ok "screen capture:$grabbed"
         command -v ffmpeg > /dev/null 2>&1 ||             warn "  no ffmpeg, so the session is not filmed; stills still work"
     else
-        warn "no screen grabber could be installed (tried ffmpeg, ImageMagick)."
-        warn "  Recording is unaffected. Stills at gaps will show only the"
-        warn "  application's own window, not pop-ups or other windows over it."
+        warn "neither ffmpeg nor ImageMagick could be installed."
+        warn "  Stills still work: the wheel carries mss, which photographs the"
+        warn "  screen directly. Only the session video needs ffmpeg."
     fi
 
     local staticcxx qml

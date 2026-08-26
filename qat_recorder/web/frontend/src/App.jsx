@@ -749,6 +749,21 @@ export default function App() {
                     proposal={proposal}
                     onAcceptProposal={acceptProposal}
                     onDismissProposal={() => setProposal(null)}
+                    onCloseWindow={async (index) => {
+                      try {
+                        setBusy(true);
+                        await api.command(agentUrl, sessionId, 'repair_closed',
+                                          { index }, token);
+                        setIsScriptEdited(false);
+                        setCustomScript('');
+                        setRefreshTick(tick => tick + 1);
+                        updateStatus('Gap filled — close() on the name the window was closed under');
+                      } catch (e) {
+                        updateStatus(`Could not fill that gap: ${e.message}`);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
                     onApply={applyFix}
                     shotFor={shotFor}
                     onWriteCode={(drop) => {

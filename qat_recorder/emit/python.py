@@ -376,6 +376,9 @@ def _drop_marker(index: int, drop) -> str:
         # What the offered fix is worth. "the third check box in this group" is
         # a real answer and a fragile one, and the operator decides knowing that
         # rather than after a rerun.
+        # A window that was closed cannot be looked for, so this is the one
+        # repair offered without a check. The panel says so before it is taken.
+        "closed_as": (drop.evidence or {}).get("closed_proposal") or None,
         "grade": drop.suggestion.get("robustness", ""),
         "fix_label": drop.suggestion.get("label", ""),
     }, ensure_ascii=False)

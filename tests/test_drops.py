@@ -665,3 +665,62 @@ def test_evidence_survives_recording_json():
     _, recording = _feed(click_pair(200, "QPushButton", text="Apply"))
     again = Recording.loads(recording.dumps())
     assert again.drops[0].evidence["candidates"]
+
+
+# --- a window that is gone by definition -----------------------------------
+
+def test_a_closed_window_keeps_the_name_it_was_closed_under(controller):  # noqa: F811
+    """The one case where nothing can be checked, because checking is the
+    question.
+
+    A window dismissed from its title bar is gone by the time anything can be
+    asked about it. Every candidate list is empty and every honest answer is
+    "cannot identify it" -- which left a gap nobody could ever fill, for
+    something the filter had named on the way out.
+    """
+    from tests.test_capture import event
+
+    controller.start()
+    controller._test["receiver"].push(
+        event("close_window", 500, "TorrentCreatorDialog", "TorrentCreatorDialog",
+              path=(("QMainWindow", "MainWindow"),)))
+    controller.poll()
+
+    drop, = controller.recording.drops
+    assert drop.evidence["candidates"] == [], "the window really is gone"
+    assert drop.evidence["closed_proposal"] == {
+        "type": "TorrentCreatorDialog", "objectName": "TorrentCreatorDialog"}
+
+    controller.repair_closed(0)
+    filled = controller.recording.actions[-1]
+    assert filled.kind is ActionKind.CLOSE_WINDOW
+    assert filled.target.definition["objectName"] == "TorrentCreatorDialog"
+    # Graded honestly: it was never checked, and the script has to say so.
+    assert filled.target.robustness.value == "unresolved"
+    assert any("could not be checked" in warning
+               for warning in filled.target.warnings)
+
+
+def test_closing_by_name_is_refused_when_no_name_was_reported(controller):  # noqa: F811
+    from tests.test_capture import event
+
+    controller.start()
+    controller._test["receiver"].push(event("close_window", 500, "", ""))
+    controller.poll()
+    if not controller.recording.drops:
+        pytest.skip("an unnamed close produced no gap in this tree")
+    with pytest.raises(ControllerError):
+        controller.repair_closed(0)
+
+
+def test_the_marker_tells_the_panel_a_window_can_be_closed_by_name(controller):  # noqa: F811
+    from tests.test_capture import event
+
+    controller.start()
+    controller._test["receiver"].push(
+        event("close_window", 500, "TorrentCreatorDialog", "TorrentCreatorDialog"))
+    controller.poll()
+
+    line, = _marker_lines(emit_python(controller.recording))
+    payload = json.loads(line.split(DROP_MARKER, 1)[1])
+    assert payload["closed_as"]["objectName"] == "TorrentCreatorDialog"

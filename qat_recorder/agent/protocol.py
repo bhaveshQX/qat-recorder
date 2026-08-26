@@ -51,6 +51,7 @@ class Command(str, Enum):
     CANCEL_REPAIR = "cancel_repair"
     REPAIR_SUGGESTION = "repair_suggestion"
     REPAIR_CHOOSE = "repair_choose"
+    REPAIR_CLOSED = "repair_closed"
     SCREENSHOT = "screenshot"
 
 

@@ -18,6 +18,19 @@ from tests.test_drops import NOWHERE, _record_a_gap          # noqa: F401
 from tests.test_ui_controller import controller              # noqa: F401  (fixture)
 
 
+@pytest.fixture()
+def no_screen(monkeypatch):
+    """A machine that cannot photograph its screen at all.
+
+    mss ships in the wheel and works wherever there is a display, so the
+    fallbacks now have to be asked for explicitly to be tested. That is the
+    point of it: the paths below are what happens on a headless VM, not what
+    happens normally.
+    """
+    monkeypatch.setattr(SessionMedia, "_grab_with_mss", lambda self, path: False)
+    monkeypatch.setattr(SessionMedia, "_grab_screen", lambda self, path: False)
+
+
 class FakeQat:
     """Writes a file where Qat would put a screenshot."""
 
@@ -49,14 +62,14 @@ def test_numbering_keeps_the_order_they_were_taken_in(tmp_path):
     assert media.stills() == sorted(names), "sorted by name is sorted by time"
 
 
-def test_a_screenshot_that_fails_is_not_an_exception(tmp_path):
+def test_a_screenshot_that_fails_is_not_an_exception(tmp_path, no_screen):
     """A recording continues whatever the screen is doing."""
     media = SessionMedia(tmp_path, qat_module=FakeQat(works=False))
     assert media.take("gap-0") == ""
     assert media.stills() == []
 
 
-def test_no_qat_means_no_still_and_no_crash(tmp_path):
+def test_no_qat_means_no_still_and_no_crash(tmp_path, no_screen):
     assert SessionMedia(tmp_path).take("gap-0") == ""
 
 
@@ -138,7 +151,7 @@ def test_a_gap_is_photographed_once(controller, tmp_path):    # noqa: F811
     assert len(controller.media.stills()) == 1
 
 
-def test_a_failed_screenshot_does_not_stop_the_recording(controller, tmp_path):  # noqa: F811
+def test_a_failed_screenshot_does_not_stop_the_recording(controller, tmp_path, no_screen):  # noqa: F811
     controller.media = SessionMedia(tmp_path, qat_module=FakeQat(works=False),
                                     record_video=False)
     _record_a_gap(controller)
@@ -172,7 +185,7 @@ def test_a_session_keeping_no_media_still_records(controller):  # noqa: F811
 
 # --- not once a second, forever --------------------------------------------
 
-def test_a_gap_that_cannot_be_photographed_is_not_retried(controller, tmp_path):  # noqa: F811
+def test_a_gap_that_cannot_be_photographed_is_not_retried(controller, tmp_path, no_screen):  # noqa: F811
     """The log spam.
 
     Retrying anything without a picture on every tick of the pump meant a
@@ -258,3 +271,26 @@ def test_scrolling_is_never_photographed(tmp_path):
 
     assert camera.asked == [], "scrolling a list photographed the screen"
     assert controller.recording.drops == []
+
+
+def test_the_screen_is_photographed_without_any_external_programme(tmp_path):
+    """The one that has to work on a locked-down VM.
+
+    ffmpeg is in a third-party repository on RHEL, ImageMagick and scrot are
+    packages somebody has to install, and Qat can only photograph the widget
+    tree it is attached to -- which is exactly not the pop-up over it. mss ships
+    in the wheel and calls XGetImage through ctypes, so a still is the whole
+    screen wherever there is a display at all.
+    """
+    import os
+    if not (os.environ.get("DISPLAY") or os.name == "nt"):
+        pytest.skip("no display to photograph")
+
+    media = SessionMedia(tmp_path, record_video=False)   # no Qat at all
+    name = media.take("proof")
+    assert name, "the screen could not be photographed without a helper"
+
+    data = (tmp_path / "shots" / name).read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(data) > 5000, "a real screen, not a placeholder"
+    assert media.still_note == "", "nothing to apologise for when it worked"

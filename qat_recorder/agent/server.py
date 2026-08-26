@@ -285,6 +285,8 @@ class Agent:
                     controller.repair_choose(int(args.get("index", -1)),
                                              int(args.get("candidate", -1)),
                                              args.get("text", ""))
+                elif action is Command.REPAIR_CLOSED:
+                    controller.repair_closed(int(args.get("index", -1)))
                 elif action is Command.REPAIR_SUGGESTION:
                     controller.repair_suggestion(int(args.get("index", -1)),
                                                  args.get("text", ""))

@@ -1386,7 +1386,8 @@ class CaptureSession:
 
         keep_reason, keep_note = self._last_reason, self._last_note
         try:
-            return gather(self.backend, self.resolver, event.target, why)
+            return gather(self.backend, self.resolver, event.target, why,
+                          kind=event.kind)
         except Exception:                                     # noqa: BLE001
             return {}
         finally:
