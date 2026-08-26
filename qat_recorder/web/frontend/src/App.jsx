@@ -351,8 +351,13 @@ export default function App() {
   const pointAtGap = async (index) => {
     if (!sessionId) return;
     try {
-      await api.command(agentUrl, sessionId, 'arm_repair', { index }, token);
-      updateStatus('Now click that control in the application — the click fills the gap and is not recorded as a step of its own');
+      const answer = await api.command(agentUrl, sessionId, 'arm_repair',
+                                       { index }, token);
+      // From the response, not from the next WebSocket frame. Waiting for that
+      // left more than a second between the click and any sign of it, which
+      // reads as a button that does nothing.
+      if (answer?.state) setState(answer.state);
+      updateStatus('Waiting — switch to the application and click that control');
     } catch (e) {
       updateStatus(`Could not start pointing: ${e.message}`);
     }
@@ -628,8 +633,11 @@ export default function App() {
                     canPoint={state === S.RECORDING || state === S.PICKING}
                     picking={state === S.PICKING}
                     onPoint={pointAtGap}
-                    onCancelPoint={() => sendCommand('cancel_checkpoint')
-                      .then(() => updateStatus('Stopped waiting for a click'))}
+                    onCancelPoint={async () => {
+                      const answer = await sendCommand('cancel_checkpoint');
+                      if (answer?.state) setState(answer.state);
+                      updateStatus('Stopped waiting for a click');
+                    }}
                     onApply={applyFix}
                     shotFor={shotFor}
                     onWriteCode={(drop) => {

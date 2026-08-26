@@ -204,3 +204,47 @@ def test_a_session_with_no_media_says_so_rather_than_failing(panel):
                                headers=AUTH).json()
     assert listing["stills"] == []
     assert listing["video_note"]
+
+
+# --- pointing at the control, over the wire --------------------------------
+
+def test_pointing_arms_and_the_next_click_fills_the_gap(panel):
+    """The whole path the panel drives, end to end.
+
+    Arm from the browser; the operator clicks the control in the application;
+    the click is resolved the way every recorded step is resolved and lands in
+    the gap. The click itself is not recorded as a step of its own.
+    """
+    _with_a_gap(panel)
+    assert panel.preview()["open_gaps"] == 1
+
+    armed = panel.command("arm_repair", index=0)
+    assert armed.status_code == 200
+    assert armed.json()["state"] == "picking", (
+        "the panel shows Waiting from this, not from the next socket frame")
+
+    steps_before = len([g for g in panel.preview()["script"].splitlines()
+                        if "mouse_click" in g])
+    panel.push(*click_pair(400, "QPushButton", "loginButton"))
+
+    after = panel.preview()
+    assert after["open_gaps"] == 0
+    assert after["gaps"][0]["repaired"] is True
+    assert DROP_MARKER not in after["script"]
+    steps_after = len([g for g in after["script"].splitlines()
+                       if "mouse_click" in g])
+    assert steps_after == steps_before + 1, (
+        "the pointing click added the repair and nothing else")
+
+
+def test_pointing_needs_a_running_application(panel):
+    _with_a_gap(panel)
+    panel.command("stop")
+    assert panel.command("arm_repair", index=0).status_code == 409
+
+
+def test_arming_can_be_called_off(panel):
+    _with_a_gap(panel)
+    panel.command("arm_repair", index=0)
+    assert panel.command("cancel_checkpoint").json()["state"] == "recording"
+    assert panel.preview()["open_gaps"] == 1, "the gap is still open"

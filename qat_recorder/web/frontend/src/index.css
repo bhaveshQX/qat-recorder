@@ -1090,3 +1090,17 @@ body {
 .media-failed { color: var(--color-unresolved); }
 
 .drop-gap-shot img, .screen-strip img { width: 100%; height: auto; display: block; }
+
+/* Armed and waiting for a click in the application. Loud, because the next
+   move is the operator's and it happens on a different screen. */
+.drop-gap-waiting {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(124, 92, 252, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent-hover);
+  font-size: 12px;
+  line-height: 1.5;
+  animation: pulse 1.6s ease-in-out infinite;
+}

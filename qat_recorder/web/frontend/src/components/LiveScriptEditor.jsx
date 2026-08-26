@@ -63,18 +63,28 @@ function fixFor(data) {
 }
 
 /** Why there is no one-click fix, in the operator's terms. */
-function whyNoFix(data) {
+function whyNoFix(data, canPoint) {
   if (data.checked) return '';
+  // What to do about it depends on whether the application is still running.
+  // Telling somebody to point at a control while the Point at it button is not
+  // even rendered -- because the recording has stopped and there is nothing
+  // left to point at -- is advice that reads as a broken button.
+  const instead = canPoint
+    ? 'Point at it: click the control in the application and the recorder will '
+      + 'work out how to address it.'
+    : 'The application has been closed, so there is nothing left to point at. '
+      + 'Write the step yourself, or record the session again and fill the gap '
+      + 'while it is still open.';
+
   if (data.matched > 1) {
     return `Nothing here identifies one object: what the recorder saw matched `
-         + `${data.matched} of them when this happened. Point at it instead.`;
+         + `${data.matched} of them when this happened. ${instead}`;
   }
   if (data.matched === 0) {
     return 'Nothing in the application matched what the recorder saw, which is '
-         + 'why the event was lost. Point at it instead.';
+         + `why the event was lost. ${instead}`;
   }
-  return 'The object could not be checked against the application. Point at it '
-       + 'instead.';
+  return `The object could not be checked against the application. ${instead}`;
 }
 
 //: The resolver's own vocabulary, in the panel's colours.
@@ -89,7 +99,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
   const def = definitionFrom(data.seen);
-  const why = whyNoFix(data);
+  const why = whyNoFix(data, canPoint);
 
   return (
     <div className="drop-gap">
@@ -111,7 +121,10 @@ function DroppedEventWidget({ data, onApply, onPoint, onCancelPoint, onWriteCode
           </div>
         )}
         {picking ? (
-          <div className="drop-gap-note">Waiting — click that control in the application.</div>
+          <div className="drop-gap-waiting">
+            Waiting for you. Switch to the application and click the control —
+            that click fills this gap and is not recorded as a step of its own.
+          </div>
         ) : why ? (
           <div className="drop-gap-note">{why}</div>
         ) : canPoint ? (
