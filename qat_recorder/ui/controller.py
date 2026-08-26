@@ -125,6 +125,7 @@ class RecorderController:
         #: successes: a gap that could not be photographed stays unphotographed
         #: rather than being retried on every tick of the pump.
         self._photographed = 0
+        self._photographed_steps = 0
         self.picked_target = None
         self.picked_node = None
         self.picked_properties: dict = {}
@@ -196,6 +197,7 @@ class RecorderController:
         self.events_seen = 0
         self.events_dropped = 0
         self._photographed = 0
+        self._photographed_steps = 0
         if self.media is not None:
             # Only when nobody supplied one: whoever built the media holder may
             # know better than this controller does, and a test certainly does.
@@ -222,6 +224,9 @@ class RecorderController:
         # application rather than an empty desktop.
         if self.media is not None:
             self.media.stop_video()
+            # Let the queued stills finish, so a session that is saved straight
+            # after stopping is not missing the last few.
+            self.media.settle()
 
         if self._receiver is not None:
             self._receiver.stop()
@@ -452,8 +457,27 @@ class RecorderController:
             before = len(self.session.recording.actions)
             if self.session.flush_stale():
                 self._emit_new_actions(before)
+        self._photograph_new_steps()
         self._photograph_new_gaps()
         return handled
+
+    def _photograph_new_steps(self) -> None:
+        """A picture of the screen for each step, as it is folded.
+
+        What a step *did* is only half of what somebody reviewing it needs; the
+        other half is what was in front of the operator when they did it, and
+        that is gone a second later. Queued behind the pump, so the recorder
+        never waits for a camera.
+        """
+        if self.media is None or self.recording is None:
+            return
+        actions = self.recording.actions
+        while self._photographed_steps < len(actions):
+            index = self._photographed_steps
+            self._photographed_steps += 1
+            if actions[index].kind is ActionKind.LAUNCH:
+                continue                      # nothing on screen yet
+            actions[index].shot = self.media.capture_async(f"step-{index:03d}")
 
     def _photograph_new_gaps(self) -> None:
         """A still for every gap that has appeared since the last look.

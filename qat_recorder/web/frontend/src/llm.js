@@ -50,8 +50,16 @@ export function saveSettings(settings) {
   } catch { /* the panel still works; the key just will not be remembered */ }
 }
 
+/** The steps on either side, so the control can be placed in what was going on. */
+function inContext(around) {
+  if (!around || !around.length) return [];
+  return ['', 'What the operator did around this point, in order:',
+          ...around.map(step => `  ${step.before ? 'before' : 'after'}: `
+                              + `${step.kind} ${step.label || ''}`.trim()), ''];
+}
+
 /** The evidence, as something a model can read. */
-function describe(pack, kind, label, reason) {
+function describe(pack, kind, label, reason, around) {
   const lines = [
     `The operator ${kind === 'key_press' ? 'typed into' : 'clicked'} a control`,
     `in a Qt application, and the recorder could not turn it into a test step.`,
@@ -68,6 +76,7 @@ function describe(pack, kind, label, reason) {
       ? `Its ancestors, innermost first: ${pack.path.map(p => `${p.class}${p.objectName ? '#' + p.objectName : ''}`).join(' < ')}`
       : '',
     ``,
+    ...inContext(around),
     `These are the objects of that class the application actually has. Each was`,
     `resolved against the running application; "addressable as" is what a test`,
     `step would use, and its grade is how durable that is.`,
@@ -80,9 +89,14 @@ function describe(pack, kind, label, reason) {
       .filter(([, v]) => v !== '' && v !== null)
       .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
       .join(' ');
-    const near = (candidate.labels_near || []).map(l => l.text).join(' | ');
     lines.push(`id ${candidate.id}: ${shown || '(no readable properties)'}`);
-    if (near) lines.push(`    text nearby: ${near}`);
+    // Where the text sits, not merely that it is close. A label to the left in
+    // the same row is what names a control in a Qt settings dialog; something
+    // forty pixels away diagonally is a coincidence.
+    for (const label of candidate.labels_near || []) {
+      lines.push(`    ${JSON.stringify(label.text)} — ${label.where}`
+               + `, ${label.distance}px away`);
+    }
     lines.push(`    addressable as: ${candidate.target
       ? JSON.stringify(candidate.target.definition) + `  (${candidate.robustness})`
       : 'nothing durable — this one cannot be addressed'}`);
@@ -119,7 +133,7 @@ const SYSTEM = [
  * rather than a wasted opportunity.
  */
 export async function chooseCandidate(settings, pack, meta, imageDataUrl) {
-  const prompt = describe(pack, meta.kind, meta.label, meta.reason);
+  const prompt = describe(pack, meta.kind, meta.label, meta.reason, meta.around);
   const withImage = imageDataUrl && seesImages(settings.model);
 
   const content = withImage

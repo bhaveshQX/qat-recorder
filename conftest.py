@@ -1,3 +1,4 @@
+import os
 # -*- coding: utf-8 -*-
 """Pytest configuration for the QAT Recorder test suite."""
 
@@ -34,3 +35,10 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "live" in item.keywords:
             item.add_marker(skip)
+
+
+# A picture of the screen for every recorded step is a real feature and a real
+# cost: the suite drives hundreds of steps through agent-backed sessions, and
+# photographing this machine's screen for each one doubled how long it takes.
+# The tests that are about stills turn it back on for themselves.
+os.environ.setdefault("QATREC_NO_STEP_SHOTS", "1")

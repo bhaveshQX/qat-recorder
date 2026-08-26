@@ -1,11 +1,30 @@
 import { useEffect, useRef } from 'react';
+import MediaImage from './MediaImage';
+
+/** What was on screen when this step was recorded.
+ *
+ * The step says what was done; only the picture says what it was done *to* --
+ * which dialog was open, which tab, what the control looked like -- and that is
+ * gone a second later.
+ */
+function StepShot({ shot, onOpen }) {
+  if (!shot) return <span className="col-shot-none">—</span>;
+  return (
+    <button type="button" className="step-shot"
+            title="what was on screen — click to enlarge"
+            onClick={(event) => { event.stopPropagation(); if (onOpen) onOpen(shot); }}>
+      <MediaImage {...shot} alt="the screen for this step" />
+    </button>
+  );
+}
 
 function robustnessClass(r) {
   if (!r) return '';
   return `robustness robustness-${r}`;
 }
 
-export default function ActionTable({ actions, selectedRow, onSelect }) {
+export default function ActionTable({ actions, selectedRow, onSelect,
+                                      shotForStep, onOpenShot }) {
   const tbodyRef = useRef(null);
 
   // Auto-scroll to bottom when new actions arrive
@@ -37,6 +56,7 @@ export default function ActionTable({ actions, selectedRow, onSelect }) {
             <th className="col-action">Action</th>
             <th>Object</th>
             <th className="col-durability">Durability</th>
+            <th className="col-shot">Screen</th>
           </tr>
         </thead>
         <tbody ref={tbodyRef}>
@@ -54,6 +74,10 @@ export default function ActionTable({ actions, selectedRow, onSelect }) {
                   {robustness && (
                     <span className={robustnessClass(robustness)}>{robustness}</span>
                   )}
+                </td>
+                <td className="col-shot">
+                  <StepShot shot={shotForStep && shotForStep(idx)}
+                            onOpen={onOpenShot} />
                 </td>
               </tr>
             );

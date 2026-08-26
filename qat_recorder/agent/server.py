@@ -189,7 +189,8 @@ class Agent:
                 controller.media = SessionMedia(
                     session.directory(),
                     qat_module=getattr(controller, "qat", None),
-                    record_video=os.environ.get("QATREC_NO_VIDEO") != "1")
+                    record_video=os.environ.get("QATREC_NO_VIDEO") != "1",
+                    capture_steps=os.environ.get("QATREC_NO_STEP_SHOTS") != "1")
             try:
                 with session.lock:
                     controller.start()
@@ -356,6 +357,15 @@ class Agent:
                         "this session is not keeping any media", "filming": False}
             described = holder.describe()
             recording = session.controller.recording
+            described["capturing_steps"] = bool(
+                getattr(holder, "capture_steps", False))
+            # One per step as well as one per gap, so the panel can put the
+            # screen beside the line that produced it.
+            described["step_shots"] = {
+                str(index): action.shot
+                for index, action in enumerate(
+                    recording.actions if recording else [])
+                if action.shot}
             described["gap_shots"] = {
                 str(index): drop.shot
                 for index, drop in enumerate(recording.drops if recording else [])
@@ -378,7 +388,8 @@ class Agent:
             drop = drops[index]
             return {"index": index, "kind": drop.kind, "label": drop.label,
                     "reason": drop.reason, "shot": drop.shot,
-                    "evidence": drop.evidence}
+                    "after": drop.after,
+                    "evidence": dict(drop.evidence, after=drop.after)}
 
     def media_file(self, session_id: str, name: str):
         """The bytes of one still or the video, as a path. Never escapes."""

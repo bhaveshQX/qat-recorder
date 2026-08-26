@@ -47,8 +47,29 @@ INTERESTING = ("objectName", "text", "title", "accessibleName", "accessibleDescr
 LABEL_CLASSES = ("QLabel", "QCheckBox", "QRadioButton", "QGroupBox", "QPushButton")
 
 
-def _readable(backend, node) -> dict:
-    """Whatever of INTERESTING this object will admit to. Never raises."""
+#: How many objects of one class are worth measuring for nearby text. A dialog
+#: has tens of labels, not thousands, and every one costs a walk up its parents.
+MAX_LABELS_PER_CLASS = 40
+
+
+def _readable(backend, node, memo=None) -> dict:
+    """Whatever of INTERESTING this object will admit to. Never raises.
+
+    Memoised within one gather: measuring the text around twenty-five candidates
+    asks the same labels the same questions twenty-five times over, and each
+    question is a round trip to the application under test.
+    """
+    if memo is not None:
+        cached = memo.get(id(node))
+        if cached is not None:
+            return cached
+    out = _read_uncached(backend, node)
+    if memo is not None:
+        memo[id(node)] = out
+    return out
+
+
+def _read_uncached(backend, node) -> dict:
     try:
         properties = backend.properties(node, keys=INTERESTING)
     except TypeError:                    # a backend predating the keys argument
@@ -66,34 +87,119 @@ def _readable(backend, node) -> dict:
     return out
 
 
-def _labels_near(backend, properties: Mapping[str, Any], limit: int = 4) -> list:
-    """Text close to this object, nearest first.
+def _box(properties: Mapping[str, Any]):
+    """(x, y, w, h) if this object will admit to a rectangle."""
+    values = [properties.get(key) for key in ("x", "y", "width", "height")]
+    if any(not isinstance(value, (int, float)) for value in values):
+        return None
+    return tuple(float(value) for value in values)
 
-    Not a locator and not pretending to be one: it is how a person recognises a
-    control that has no name. The check box beside "Enable DHT" is *the DHT one*
-    to everybody except the object tree.
+
+def _absolute(backend, node, properties: Mapping[str, Any], depth: int = 12,
+              memo=None):
+    """Where this object is on the screen, not where it is inside its parent.
+
+    Qt reports a widget's position relative to whatever contains it, so two
+    controls in different group boxes have coordinates that cannot be compared
+    at all -- and "the label to the left of this check box" is a comparison.
+    Walking up the parents and adding the offsets puts everything into one
+    space, which is the only thing that makes the directions below mean
+    anything.
     """
-    x, y = properties.get("x"), properties.get("y")
-    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+    box = _box(properties)
+    if box is None:
+        return None
+    x, y, width, height = box
+    current = node
+    for _ in range(depth):
+        try:
+            current = backend.parent(current)
+        except Exception:                                    # noqa: BLE001
+            break
+        if current is None:
+            break
+        outer = _box(_readable(backend, current, memo))
+        if outer is None:
+            continue
+        x += outer[0]
+        y += outer[1]
+    return (x, y, width, height)
+
+
+def _relationship(subject, other) -> tuple:
+    """How `other` sits against `subject`: (direction, distance).
+
+    The directions people actually use to describe a control that has no name.
+    The aligned ones are the crossing cases -- the label in the same row of a
+    settings grid, the header above a column -- and they rank first, because
+    alignment is what makes text *belong* to a control rather than merely be
+    near it.
+    """
+    sx, sy, sw, sh = subject
+    ox, oy, ow, oh = other
+    same_row = oy < sy + sh and sy < oy + oh
+    same_column = ox < sx + sw and sx < ox + ow
+
+    if same_row and ox + ow <= sx:
+        return "to the left, same row", sx - (ox + ow)
+    if same_row and ox >= sx + sw:
+        return "to the right, same row", ox - (sx + sw)
+    if same_column and oy + oh <= sy:
+        return "above, same column", sy - (oy + oh)
+    if same_column and oy >= sy + sh:
+        return "below, same column", oy - (sy + sh)
+    return "nearby", abs(ox - sx) + abs(oy - sy)
+
+
+#: Aligned text beats merely-close text, because alignment is what makes a label
+#: belong to a control. Left and above first: that is where Qt dialogs put them.
+_DIRECTION_RANK = {
+    "to the left, same row": 0,
+    "above, same column": 1,
+    "to the right, same row": 2,
+    "below, same column": 3,
+    "nearby": 4,
+}
+
+
+def _labels_near(backend, node, properties: Mapping[str, Any], limit: int = 6,
+                 memo=None) -> list:
+    """Text around this object: beside it, above it, across from it.
+
+    Not a locator and not pretending to be one. It is how a person recognises a
+    control that has no name -- the check box beside "Enable DHT" is *the DHT
+    one* to everybody except the object tree -- and it is the most useful thing
+    anybody, or anything, can be given when asked which control was meant.
+    """
+    subject = _absolute(backend, node, properties, memo=memo)
+    if subject is None:
         return []
 
     found = []
     for class_name in LABEL_CLASSES:
         try:
-            for other in backend.find_all({"type": class_name}):
-                text = _readable(backend, other)
-                words = text.get("text") or text.get("title") or ""
-                ox, oy = text.get("x"), text.get("y")
-                if not words or not isinstance(ox, (int, float)) \
-                        or not isinstance(oy, (int, float)):
-                    continue
-                distance = abs(ox - x) + abs(oy - y)     # near enough to rank by
-                found.append((distance, str(words), class_name))
+            others = list(backend.find_all({"type": class_name}))[:MAX_LABELS_PER_CLASS]
         except Exception:                                    # noqa: BLE001
             continue
-    found.sort(key=lambda item: item[0])
-    return [{"text": words, "type": class_name, "distance": round(distance, 1)}
-            for distance, words, class_name in found[:limit]]
+        for other in others:
+            if other is node:
+                continue
+            text = _readable(backend, other, memo)
+            words = (text.get("text") or text.get("title")
+                     or text.get("accessibleName") or "")
+            if not words:
+                continue
+            box = _absolute(backend, other, text, memo=memo)
+            if box is None:
+                continue
+            direction, distance = _relationship(subject, box)
+            found.append((_DIRECTION_RANK[direction], distance, str(words),
+                          class_name, direction))
+
+    found.sort(key=lambda item: (item[0], item[1]))
+    return [{"text": words, "type": class_name, "where": direction,
+             "distance": round(distance, 1)}
+            for _, distance, words, class_name, direction in found[:limit]]
 
 
 def gather(backend, resolver, locator, reason: str = "",
@@ -107,6 +213,7 @@ def gather(backend, resolver, locator, reason: str = "",
     """
     from qat_recorder.capture import find_by_locator     # noqa: PLC0415
 
+    memo: dict = {}
     class_name = (locator.cls or "").strip()
     pack = {
         "reason": reason,
@@ -152,12 +259,12 @@ def gather(backend, resolver, locator, reason: str = "",
         hit_node = None
 
     for ordinal, node in enumerate(matches[:MAX_CANDIDATES]):
-        properties = _readable(backend, node)
+        properties = _readable(backend, node, memo)
         entry = {
             "id": ordinal,
             "type": class_name,
             "properties": properties,
-            "labels_near": _labels_near(backend, properties),
+            "labels_near": _labels_near(backend, node, properties, memo=memo),
             "target": None,
             "robustness": Robustness.UNRESOLVED.value,
         }

@@ -142,7 +142,7 @@ def test_every_gap_is_photographed(controller, tmp_path):     # noqa: F811
 
 def test_a_gap_is_photographed_once(controller, tmp_path):    # noqa: F811
     controller.media = SessionMedia(tmp_path, qat_module=FakeQat(),
-                                    record_video=False)
+                                    record_video=False, capture_steps=False)
     _record_a_gap(controller)
     first = controller.recording.drops[0].shot
     controller.poll()
@@ -194,7 +194,7 @@ def test_a_gap_that_cannot_be_photographed_is_not_retried(controller, tmp_path, 
     """
     camera = FakeQat(works=False)
     controller.media = SessionMedia(tmp_path, qat_module=camera,
-                                    record_video=False)
+                                    record_video=False, capture_steps=False)
     _record_a_gap(controller)
     attempts = len(camera.asked)
 
@@ -294,3 +294,58 @@ def test_the_screen_is_photographed_without_any_external_programme(tmp_path):
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert len(data) > 5000, "a real screen, not a placeholder"
     assert media.still_note == "", "nothing to apologise for when it worked"
+
+
+# --- a picture for every step ----------------------------------------------
+
+def test_every_step_is_photographed(controller, tmp_path):    # noqa: F811
+    """What a step did is half of what a reviewer needs. The other half is what
+    was in front of the operator when they did it."""
+    controller.media = SessionMedia(tmp_path, qat_module=FakeQat(),
+                                    record_video=False)
+    controller.start()
+    controller._test["receiver"].push(*click_pair(100, "QPushButton", "loginButton"))
+    controller.poll()
+    controller.media.settle()
+
+    steps = [a for a in controller.recording.actions if a.kind.value != "launch"]
+    assert steps and all(step.shot for step in steps)
+    assert all((tmp_path / "shots" / step.shot).exists() for step in steps)
+
+
+def test_the_launch_is_not_photographed(controller, tmp_path):  # noqa: F811
+    """There is nothing on screen yet."""
+    controller.media = SessionMedia(tmp_path, qat_module=FakeQat(),
+                                    record_video=False)
+    controller.start()
+    controller._test["receiver"].push(*click_pair(100, "QPushButton", "loginButton"))
+    controller.poll()
+    assert controller.recording.actions[0].kind.value == "launch"
+    assert controller.recording.actions[0].shot == ""
+
+
+def test_the_camera_never_makes_the_pump_wait(tmp_path):
+    """A recorder that stutters while somebody is working is worse than one that
+    takes no pictures, so the grab happens on a worker and the queue is bounded.
+    """
+    import time as clock
+
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
+    started = clock.perf_counter()
+    names = [media.capture_async(f"step-{n:03d}") for n in range(40)]
+    queued_in = clock.perf_counter() - started
+
+    assert queued_in < 0.5, f"queueing 40 stills blocked for {queued_in:.2f}s"
+    assert any(names), "nothing was captured at all"
+    assert len([n for n in names if n]) < 40, (
+        "the queue is unbounded, so a slow camera would drag the recorder down")
+    media.settle()
+
+
+def test_per_step_capture_can_be_turned_off(tmp_path):
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False,
+                         capture_steps=False)
+    assert media.capture_async("step-000") == ""
+    assert media.stills() == []
+    # Gaps are a different question and still get one.
+    assert media.take_for_gap("gap-0")

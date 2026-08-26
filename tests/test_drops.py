@@ -724,3 +724,28 @@ def test_the_marker_tells_the_panel_a_window_can_be_closed_by_name(controller): 
     line, = _marker_lines(emit_python(controller.recording))
     payload = json.loads(line.split(DROP_MARKER, 1)[1])
     assert payload["closed_as"]["objectName"] == "TorrentCreatorDialog"
+
+
+# --- the text around a control ---------------------------------------------
+
+def test_nearby_text_says_where_it_sits_not_merely_that_it_is_close():
+    """What names an unnamed control is the label beside it, and "beside" is a
+    direction. A label to the left in the same row names it; something forty
+    pixels away diagonally is a coincidence."""
+    from qat_recorder.evidence import _relationship
+
+    control = (100, 50, 20, 20)
+    assert _relationship(control, (10, 50, 80, 20))[0] == "to the left, same row"
+    assert _relationship(control, (100, 10, 60, 20))[0] == "above, same column"
+    assert _relationship(control, (140, 50, 60, 20))[0] == "to the right, same row"
+    assert _relationship(control, (100, 90, 60, 20))[0] == "below, same column"
+    assert _relationship(control, (900, 900, 40, 20))[0] == "nearby"
+
+
+def test_aligned_text_outranks_merely_close_text():
+    """A label in the same row belongs to the control. One nearer but unaligned
+    does not, and offering it first is how a model is misled."""
+    from qat_recorder.evidence import _DIRECTION_RANK
+
+    assert _DIRECTION_RANK["to the left, same row"] < _DIRECTION_RANK["nearby"]
+    assert _DIRECTION_RANK["above, same column"] < _DIRECTION_RANK["nearby"]

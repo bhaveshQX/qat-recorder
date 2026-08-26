@@ -1186,3 +1186,27 @@ button.drop-gap-shot {
   border-color: var(--color-unresolved);
   color: var(--color-unresolved);
 }
+
+/* The screen a step was recorded on, beside the step. Small: the table is for
+   scanning, and the picture opens full size on a click. */
+.col-shot { width: 84px; }
+.col-shot-none { color: var(--text-muted); }
+
+button.step-shot {
+  display: block;
+  width: 72px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+  background: none;
+  cursor: zoom-in;
+  line-height: 0;
+}
+
+button.step-shot:hover { border-color: var(--accent); }
+button.step-shot img { width: 100%; height: auto; display: block; }
+button.step-shot .media-loading, button.step-shot .media-failed {
+  padding: 2px 4px;
+  font-size: 9px;
+}

@@ -96,6 +96,12 @@ export default function App() {
     const name = media.gap_shots?.[String(index)];
     return name ? { base: agentUrl, sid: sessionId, name, token } : null;
   };
+  // The actions table is indexed over the steps the panel shows, which leaves
+  // out the launch; the recording counts it. Hence the offset.
+  const shotForStep = (row) => {
+    const name = media.step_shots?.[String(row + 1)];
+    return name ? { base: agentUrl, sid: sessionId, name, token } : null;
+  };
 
   // ── connect to agent ───────────────────────────────
   const handleConnect = async (url, tok) => {
@@ -391,8 +397,20 @@ export default function App() {
           picture = await fetchMediaDataUrl(agentUrl, sessionId, pack.shot, token);
         } catch { /* the evidence still stands without it */ }
       }
+      // The steps on either side. Which control was meant is often obvious
+      // from what came before it -- opening Preferences, then a tab -- and the
+      // evidence pack on its own says nothing about that.
+      const at = (pack.evidence?.after ?? actions.length);
+      const around = [
+        ...actions.slice(Math.max(0, at - 3), at)
+                  .map(one => ({ before: true, kind: one.kind,
+                                 label: one.target?.label })),
+        ...actions.slice(at, at + 2)
+                  .map(one => ({ before: false, kind: one.kind,
+                                 label: one.target?.label })),
+      ];
       const answer = await chooseCandidate(llm, pack.evidence || {}, {
-        kind: pack.kind, label: pack.label, reason: pack.reason,
+        kind: pack.kind, label: pack.label, reason: pack.reason, around,
       }, picture);
       const candidate = (pack.evidence?.candidates || [])
         .find(one => one.id === answer.id);
@@ -675,6 +693,8 @@ export default function App() {
                     actions={actions}
                     selectedRow={selectedRow}
                     onSelect={selectAction}
+                    shotForStep={shotForStep}
+                    onOpenShot={setLightbox}
                   />
                 </div>
 

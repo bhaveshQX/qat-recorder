@@ -154,6 +154,11 @@ class Action:
     args: dict = field(default_factory=dict)
     t: float = 0.0
     note: str = ""
+    #: File name of the still taken as this step was folded. Not emitted into
+    #: the generated test -- a comment per line would double the length of a
+    #: file people have to read -- but shown beside the step in the panel, and
+    #: given to a model as the picture of what was on screen at the time.
+    shot: str = ""
 
     def has_secret(self) -> bool:
         return any(is_secret(value) for value in self.args.values())
@@ -165,6 +170,7 @@ class Action:
             "args": self.args,
             "t": round(self.t, 4),
             "note": self.note,
+            "shot": self.shot,
         }
 
     @classmethod
@@ -176,6 +182,7 @@ class Action:
             args=dict(data.get("args", {})),
             t=float(data.get("t", 0.0)),
             note=data.get("note", ""),
+            shot=data.get("shot", ""),
         )
 
 

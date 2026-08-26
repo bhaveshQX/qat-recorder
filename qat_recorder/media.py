@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -64,7 +65,12 @@ SAME_SCREEN_S = 1.5
 #: A hard ceiling, because a session is minutes long and nobody is watching the
 #: disk. Past it, the gaps still get recorded; they just stop being photographed
 #: and the listing says so.
-MAX_STILLS = 200
+MAX_STILLS = 400
+
+#: How far the camera may fall behind the operator before it starts
+#: skipping. A step with no picture is a small loss; a recorder that
+#: stutters while somebody is working is not.
+QUEUE_DEPTH = 8
 
 
 def _display() -> str:
@@ -92,10 +98,15 @@ SCREEN_GRABBERS = ("mss (in the wheel)", "ffmpeg", "import", "scrot",
 class SessionMedia:
     """Stills and video for one recording, in one directory."""
 
-    def __init__(self, directory, qat_module=None, record_video: bool = True):
+    def __init__(self, directory, qat_module=None, record_video: bool = True,
+                 capture_steps: bool = True):
         self.directory = Path(directory)
         self.qat = qat_module
         self.record_video = record_video
+        #: A picture for every step, not only for every gap. Worth roughly a
+        #: tenth of a second and a couple of hundred kilobytes each, so it is
+        #: a switch rather than a certainty.
+        self.capture_steps = capture_steps
         #: Why there is no video, when there is none. Shown in the panel rather
         #: than swallowed, because "no video" and "ffmpeg is not installed on
         #: this VM" are different problems with different fixes.
@@ -105,6 +116,9 @@ class SessionMedia:
         self._shots = 0
         self._last_shot = ""
         self._last_shot_at = 0.0
+        self._pending = deque()
+        self._queued = 0
+        self._worker = None
         #: Said once, not once per attempt.
         self.still_note = ""
 
@@ -242,6 +256,74 @@ class SessionMedia:
         if name:
             self._last_shot, self._last_shot_at = name, now
         return name
+
+    # -- one per step, without making the recorder wait ---------------------
+
+    def capture_async(self, name: str) -> str:
+        """Photograph the screen behind the pump, and return the name now.
+
+        A step is folded inside the poll loop, and the loop is what keeps the
+        panel's picture of the session current. Grabbing and PNG-encoding a
+        1920x1200 screen takes long enough that doing it there, once per click,
+        would make recording visibly lag -- and a recorder that stutters while
+        somebody is working is worse than one that takes no pictures.
+
+        So the name is decided immediately and the work happens on one worker
+        thread. If that thread is already behind, the shot is skipped rather
+        than queued: falling further behind the operator helps nobody, and a
+        step without a picture costs nothing.
+        """
+        if not self.capture_steps:
+            return ""
+        if self._shots >= MAX_STILLS:
+            self.still_note = (
+                f"stopped after {MAX_STILLS} stills; the steps and gaps are all "
+                "still recorded, they just have no picture")
+            return ""
+        shot = f"{name}.png"
+        with self._lock:
+            if self._queued >= QUEUE_DEPTH:
+                return ""
+            # Queued *before* the worker is started, and both under the lock.
+            # The other order loses shots: the worker wakes, finds the queue
+            # empty, exits, and the item appended a moment later is left with
+            # nothing running to take it.
+            self._pending.append(shot)
+            self._queued += 1
+            self._shots += 1
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._run_queue, daemon=True)
+                self._worker.start()
+        return shot
+
+    def _run_queue(self) -> None:
+        while True:
+            with self._lock:
+                if not self._pending:
+                    # Cleared inside the same lock that queues work, so there is
+                    # no window where a caller sees a live worker that is on its
+                    # way out.
+                    self._worker = None
+                    return
+                shot = self._pending.popleft()
+            try:
+                self.shots_dir.mkdir(parents=True, exist_ok=True)
+                path = self.shots_dir / shot
+                self._grab_with_mss(path) or self._grab_screen(path)                     or self._ask_qat(path)
+            except Exception:                                # noqa: BLE001
+                pass
+            finally:
+                with self._lock:
+                    self._queued -= 1
+
+    def settle(self, timeout: float = 5.0) -> None:
+        """Wait for the queued shots, so a saved session is not missing them."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self._queued <= 0:
+                    return
+            time.sleep(0.05)
 
     def stills(self) -> list:
         if not self.shots_dir.is_dir():
