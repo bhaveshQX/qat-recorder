@@ -1141,3 +1141,42 @@ button.drop-gap-shot {
   cursor: zoom-in;
   text-align: left;
 }
+
+/* What the model proposed, and what will actually be inserted if it is taken.
+   Shown before anything is committed: the point is that a person sees the
+   object and the locator, not just a verdict. */
+.drop-gap-proposal {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(124, 92, 252, 0.10);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drop-gap-proposal-head { color: var(--accent-hover); }
+
+.drop-gap-proposal-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+.field-hint {
+  margin: -4px 0 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.field-check input { width: auto; }

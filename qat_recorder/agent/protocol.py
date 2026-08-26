@@ -50,6 +50,7 @@ class Command(str, Enum):
     PICK_NOW = "pick_now"
     CANCEL_REPAIR = "cancel_repair"
     REPAIR_SUGGESTION = "repair_suggestion"
+    REPAIR_CHOOSE = "repair_choose"
     SCREENSHOT = "screenshot"
 
 

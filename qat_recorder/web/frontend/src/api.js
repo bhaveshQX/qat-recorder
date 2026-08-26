@@ -41,6 +41,8 @@ export const api = {
   artifacts:    (base, sid, custom_script, token) => 
     request(base, 'POST', `/v1/sessions/${sid}/artifacts`, { custom_script }, token),
   preview:      (base, sid, token) => request(base, 'GET', `/v1/sessions/${sid}/preview`, undefined, token),
+  evidence:     (base, sid, index, token) =>
+    request(base, 'GET', `/v1/sessions/${sid}/gaps/${index}/evidence`, undefined, token),
   media:        (base, sid, token) => request(base, 'GET', `/v1/sessions/${sid}/media`, undefined, token),
   replay:       (base, sid, timeout, token) =>
     request(base, 'POST', `/v1/sessions/${sid}/replay`, { timeout: timeout || 0 }, token),
@@ -79,6 +81,21 @@ export async function fetchMedia(base, sid, name, token) {
     { headers: headers(token) });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return URL.createObjectURL(await response.blob());
+}
+
+/** A still as a data: URL, which is how an OpenAI-compatible API takes an image. */
+export async function fetchMediaDataUrl(base, sid, name, token) {
+  const response = await fetch(
+    `${base}/v1/sessions/${sid}/media/${encodeURIComponent(name)}`,
+    { headers: headers(token) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const blob = await response.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('could not read the still'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 // ── WebSocket for real-time events ──────────────────────────────

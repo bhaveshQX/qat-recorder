@@ -190,6 +190,10 @@ def create_app(agent, token: str = "") -> FastAPI:
     async def preview(session_id: str, _auth=Authenticated):
         return _handle(agent.preview, session_id)
 
+    @app.get("/v1/sessions/{session_id}/gaps/{index}/evidence")
+    async def evidence(session_id: str, index: int, _auth=Authenticated):
+        return _handle(agent.evidence, session_id, index)
+
     @app.get("/v1/sessions/{session_id}/media")
     async def media(session_id: str, _auth=Authenticated):
         return _handle(agent.media, session_id)

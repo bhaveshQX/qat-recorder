@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { api, connectEvents, mediaUrl } from './api';
+import { api, connectEvents, mediaUrl, fetchMediaDataUrl } from './api';
+import { loadSettings, saveSettings, chooseCandidate } from './llm';
+import LlmSettings from './components/LlmSettings';
 import MediaImage from './components/MediaImage';
 import Header from './components/Header';
 import ConnectBar from './components/ConnectBar';
@@ -26,6 +28,10 @@ export default function App() {
   // A still opened full size. The thumbnail in a gap is too small to
   // recognise a dialog by.
   const [lightbox, setLightbox] = useState(null);
+  const [llm, setLlm] = useState(loadSettings);
+  const [showLlmSettings, setShowLlmSettings] = useState(false);
+  // What the model said about one gap, awaiting the operator's yes.
+  const [proposal, setProposal] = useState(null);
 
   // ── session state ──────────────────────────────────
   const [state, setState]         = useState(S.IDLE);
@@ -351,6 +357,54 @@ export default function App() {
   // operator shows the recorder the control it could not name. The click goes
   // through the same resolver a recorded step goes through, so the step it
   // produces carries locators validated against the running application.
+  // Ask the model which of the objects the recorder found is the one. It never
+  // writes a locator -- it answers with an id from that list, and what gets
+  // inserted is the Target the recorder itself resolved.
+  const askModel = async (index) => {
+    if (!sessionId) return;
+    setProposal({ index, thinking: true });
+    try {
+      const pack = await api.evidence(agentUrl, sessionId, index, token);
+      let picture = null;
+      if (pack.shot) {
+        try {
+          picture = await fetchMediaDataUrl(agentUrl, sessionId, pack.shot, token);
+        } catch { /* the evidence still stands without it */ }
+      }
+      const answer = await chooseCandidate(llm, pack.evidence || {}, {
+        kind: pack.kind, label: pack.label, reason: pack.reason,
+      }, picture);
+      const candidate = (pack.evidence?.candidates || [])
+        .find(one => one.id === answer.id);
+      setProposal({ index, answer, candidate, pack });
+      updateStatus(answer.id === null
+        ? 'The model would not choose one — nothing in the list convinced it'
+        : `The model suggests id ${answer.id} (${answer.confidence} confidence)`);
+    } catch (e) {
+      setProposal(null);
+      updateStatus(`Could not ask the model: ${e.message}`);
+    }
+  };
+
+  const acceptProposal = async () => {
+    if (!proposal?.answer || proposal.answer.id === null) return;
+    try {
+      setBusy(true);
+      await api.command(agentUrl, sessionId, 'repair_choose',
+                        { index: proposal.index, candidate: proposal.answer.id },
+                        token);
+      setProposal(null);
+      setIsScriptEdited(false);
+      setCustomScript('');
+      setRefreshTick(tick => tick + 1);
+      updateStatus('Gap filled from the object the model chose');
+    } catch (e) {
+      updateStatus(`Could not fill that gap: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Pointing is two steps, because the gap is almost always noticed from a
   // different screen than the one it happened on. Arming pauses the recording
   // so getting back there costs nothing; the second step says the control is in
@@ -566,6 +620,7 @@ export default function App() {
             state={state} busy={busy}
             onRecord={startRecording} onPause={togglePause} onStop={stopRecording}
             onCheckpoint={armCheckpoint} onInsertCode={() => { setRepairTarget(null); setCustomCodeInput(''); setShowCodeModal(true); }}
+                  onModelSettings={() => setShowLlmSettings(true)}
                   onScreenshot={async () => {
                     // sendCommand reports its own failure and answers with
                     // nothing; claiming success regardless is how a failed
@@ -666,6 +721,11 @@ export default function App() {
                     onCancelPoint={cancelRepair}
                     arming={summary.arming ?? null}
                     onOpenShot={setLightbox}
+                    llmReady={!!(llm.enabled && llm.apiKey)}
+                    onAskModel={askModel}
+                    proposal={proposal}
+                    onAcceptProposal={acceptProposal}
+                    onDismissProposal={() => setProposal(null)}
                     onApply={applyFix}
                     shotFor={shotFor}
                     onWriteCode={(drop) => {
@@ -749,6 +809,11 @@ export default function App() {
           <button className="btn btn-secondary btn-sm lightbox-close"
                   onClick={() => setLightbox(null)}>Close</button>
         </div>
+      )}
+
+      {showLlmSettings && (
+        <LlmSettings settings={llm} onClose={() => setShowLlmSettings(false)}
+                     onSave={(next) => { setLlm(next); saveSettings(next); }} />
       )}
 
       {build?.mismatch && (

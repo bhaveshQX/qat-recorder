@@ -595,3 +595,73 @@ def test_a_realistic_session_asks_only_about_what_matters():
     assert capture.unresolved == 66, "everything lost is still counted"
     assert len(recording.drops) == 3, "but only three of them are questions"
     assert emit_python(recording).count(DROP_MARKER) == 3
+
+
+# --- the evidence a repair is chosen from ----------------------------------
+
+def test_a_gap_records_what_the_application_knew():
+    """The prerequisite for any repair at all, human or otherwise.
+
+    A gap is dealt with minutes later, often after the application is gone. By
+    then the only things that can identify the control are the ones somebody
+    wrote down while it was still there.
+    """
+    _, recording = _feed(click_pair(200, "QPushButton", text="Apply"))
+    pack = recording.drops[0].evidence
+
+    assert pack["class"] == "QPushButton"
+    assert pack["reason"]
+    assert len(pack["candidates"]) >= 4, "the other objects of that class"
+
+    for candidate in pack["candidates"]:
+        assert "id" in candidate and "properties" in candidate
+        # Every candidate that can be addressed carries the Target the resolver
+        # produced against the running application -- not a definition for
+        # anybody to assemble later.
+        if candidate["robustness"] != "unresolved":
+            assert candidate["target"]["definition"]
+
+
+def test_choosing_a_candidate_inserts_the_target_the_recorder_resolved(controller):  # noqa: F811
+    """The contract that keeps a chooser honest, whoever it is.
+
+    A person clicking a candidate and a model answering with an id arrive at the
+    same place, and what is inserted is what the recorder resolved. A wrong
+    choice is the wrong control; it cannot be a control that does not exist.
+    """
+    from tests.test_capture import event
+
+    controller.start()
+    controller._test["receiver"].push(*click_pair(200, "QPushButton", text="Apply"))
+    controller.poll()
+    drop = controller.recording.drops[0]
+
+    addressable = [one for one in drop.evidence["candidates"] if one["target"]]
+    assert addressable, "nothing in this application could be addressed at all"
+    chosen = addressable[0]
+
+    controller.repair_choose(0, chosen["id"])
+    filled = controller.recording.actions[-1]
+    assert filled.kind is ActionKind.CLICK
+    assert filled.target.definition == chosen["target"]["definition"]
+    assert controller.recording.open_drops() == []
+
+
+def test_an_id_that_is_not_in_the_evidence_is_refused(controller):  # noqa: F811
+    """A model naming a candidate that does not exist is the one failure this
+    design has to refuse outright."""
+    controller.start()
+    controller._test["receiver"].push(*click_pair(200, "QPushButton", text="Apply"))
+    controller.poll()
+
+    with pytest.raises(ControllerError) as raised:
+        controller.repair_choose(0, 999)
+    assert "not one" in str(raised.value)
+    assert controller.recording.open_drops(), "the gap is still open"
+
+
+def test_evidence_survives_recording_json():
+    """It has to outlive the session: that is the whole point of writing it down."""
+    _, recording = _feed(click_pair(200, "QPushButton", text="Apply"))
+    again = Recording.loads(recording.dumps())
+    assert again.drops[0].evidence["candidates"]

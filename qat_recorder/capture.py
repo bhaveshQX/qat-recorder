@@ -1353,6 +1353,7 @@ class CaptureSession:
             ("text", event.target.text),
         ) if value}
         matched, suggestion = self._check_now(event, seen)
+        evidence = self._evidence_for(event, why)
         drop = Drop(
             reason=why,
             kind=event.kind,
@@ -1362,6 +1363,7 @@ class CaptureSession:
             t=self._elapsed(event.t),
             matched=matched,
             suggestion=suggestion,
+            evidence=evidence,
         )
         if self.recording.drops:
             previous = self.recording.drops[-1]
@@ -1377,6 +1379,18 @@ class CaptureSession:
             if same_interaction and abs(drop.t - previous.t) <= _SAME_INTERACTION_S:
                 return
         self.recording.add_drop(drop)
+
+    def _evidence_for(self, event: RawEvent, why: str) -> dict:
+        """Write down what the application knows, while it still knows it."""
+        from qat_recorder.evidence import gather              # noqa: PLC0415
+
+        keep_reason, keep_note = self._last_reason, self._last_note
+        try:
+            return gather(self.backend, self.resolver, event.target, why)
+        except Exception:                                     # noqa: BLE001
+            return {}
+        finally:
+            self._last_reason, self._last_note = keep_reason, keep_note
 
     def _check_now(self, event: RawEvent, seen: dict):
         """Work out, while the application is still there, how this could be fixed.

@@ -1,6 +1,6 @@
 const S = { IDLE: 'idle', RECORDING: 'recording', PAUSED: 'paused', PICKING: 'picking', STOPPED: 'stopped' };
 
-export default function Toolbar({ state, busy, onRecord, onPause, onStop, onCheckpoint, onInsertCode, onScreenshot, onUndo, onSave, onKeep, onReplay }) {
+export default function Toolbar({ state, busy, onRecord, onPause, onStop, onCheckpoint, onInsertCode, onScreenshot, onUndo, onSave, onKeep, onReplay, onModelSettings }) {
   const recording = state === S.RECORDING || state === S.PICKING;
   const idle      = state === S.IDLE || state === S.STOPPED;
 
@@ -56,6 +56,11 @@ export default function Toolbar({ state, busy, onRecord, onPause, onStop, onChec
       <div className="toolbar-divider" />
 
       <div className="toolbar-group" style={{ display: 'flex', gap: 6 }}>
+        <button className="btn btn-ghost" onClick={onModelSettings}
+                title="the model that helps identify a control the recorder could not name">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2l1.6 3.4L13 7l-3.4 1.6L8 12l-1.6-3.4L3 7l3.4-1.6L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
+          Model
+        </button>
         <button className="btn btn-ghost" disabled={state !== S.STOPPED || busy} onClick={onSave}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 3v10h10V5.5L10.5 3H3zm7 0v3H5V3m0 10v-4h6v4" stroke="currentColor" strokeWidth="1.3" fill="none"/></svg>
           Save

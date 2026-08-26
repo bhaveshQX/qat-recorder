@@ -281,6 +281,10 @@ class Agent:
                     controller.pick_now()
                 elif action is Command.CANCEL_REPAIR:
                     controller.cancel_repair()
+                elif action is Command.REPAIR_CHOOSE:
+                    controller.repair_choose(int(args.get("index", -1)),
+                                             int(args.get("candidate", -1)),
+                                             args.get("text", ""))
                 elif action is Command.REPAIR_SUGGESTION:
                     controller.repair_suggestion(int(args.get("index", -1)),
                                                  args.get("text", ""))
@@ -355,6 +359,24 @@ class Agent:
                 for index, drop in enumerate(recording.drops if recording else [])
                 if drop.shot}
             return described
+
+    def evidence(self, session_id: str, index: int) -> dict:
+        """What was known about one gap's object while the application had it.
+
+        Its own endpoint rather than part of the preview: a pack lists every
+        object of the same class with a resolved Target each, which is far too
+        much to re-send on every keystroke of a live recording.
+        """
+        session = self._require(session_id)
+        with session.lock:
+            recording = session.controller.recording
+            drops = recording.drops if recording else []
+            if not 0 <= index < len(drops):
+                raise AgentError(f"no gap at {index}", 404)
+            drop = drops[index]
+            return {"index": index, "kind": drop.kind, "label": drop.label,
+                    "reason": drop.reason, "shot": drop.shot,
+                    "evidence": drop.evidence}
 
     def media_file(self, session_id: str, name: str):
         """The bytes of one still or the video, as a path. Never escapes."""

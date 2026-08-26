@@ -307,7 +307,38 @@ class RecorderController:
                 f"matched {drop.matched} things when the event was lost. Point "
                 f"at it while the application is running, or write the step.")
 
-        target = Target.from_dict(drop.suggestion)
+        return self._insert_repair(index, Target.from_dict(drop.suggestion), text)
+
+    def repair_choose(self, index: int, candidate: int, text: str = "") -> dict:
+        """Fill the gap with one of the objects the evidence pack lists.
+
+        The only way a choice becomes a step, whoever is choosing. A person
+        clicking a candidate and a model answering with an id both arrive here,
+        and what gets inserted is the Target that was resolved against the
+        running application when the event was lost -- never a definition
+        supplied from outside. A wrong choice is a wrong object; it cannot be an
+        object that does not exist, or a locator nobody checked.
+        """
+        if self._state not in self._EDITABLE:
+            raise ControllerError(f"cannot fill a gap while {self._state.value}")
+        recording = self.recording
+        if recording is None or not 0 <= index < len(recording.drops):
+            raise ControllerError(f"no gap at {index}")
+
+        from qat_recorder.evidence import chosen_target       # noqa: PLC0415
+        from qat_recorder.ir import Target                    # noqa: PLC0415
+
+        drop = recording.drops[index]
+        data = chosen_target(drop.evidence, candidate)
+        if not data:
+            raise ControllerError(
+                f"candidate {candidate} is not one this application could be "
+                "made to address when the event was lost")
+        return self._insert_repair(index, Target.from_dict(data), text)
+
+    def _insert_repair(self, index: int, target, text: str = "") -> dict:
+        recording = self.recording
+        drop = recording.drops[index]
         kind = self._REPAIR_KINDS.get(drop.kind, ActionKind.CLICK)
         args = {}
         if drop.kind == "key_press":

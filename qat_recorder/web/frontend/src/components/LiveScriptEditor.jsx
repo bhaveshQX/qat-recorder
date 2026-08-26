@@ -97,7 +97,8 @@ const GRADE_COLOUR = {
 
 function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
                               onWriteCode, canPoint, picking, arming, busy, shot,
-                              onOpenShot }) {
+                              onOpenShot, llmReady, onAskModel, proposal,
+                              onAcceptProposal, onDismissProposal }) {
   const [typed, setTyped] = useState('');
   const fix = fixFor(data);
   const def = definitionFrom(data.seen);
@@ -106,6 +107,7 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
   // single global picking flag put every gap on screen into Waiting at once.
   const armed = arming === data.index;
   const someoneElseArmed = arming !== null && arming !== undefined && !armed;
+  const mine = proposal && proposal.index === data.index;
 
   return (
     <div className="drop-gap">
@@ -143,6 +145,37 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
             every other step.
           </div>
         ) : null}
+        {mine && (
+          proposal.thinking ? (
+            <div className="drop-gap-note">Asking the model…</div>
+          ) : proposal.answer?.id === null ? (
+            <div className="drop-gap-note">
+              The model would not choose: {proposal.answer.why || 'nothing in the list convinced it'}.
+              {' '}Better a gap you can still see than a step that clicks the wrong thing.
+            </div>
+          ) : proposal.candidate ? (
+            <div className="drop-gap-proposal">
+              <div className="drop-gap-proposal-head">
+                The model says this is <strong>id {proposal.answer.id}</strong>
+                {' '}({proposal.answer.confidence} confidence)
+              </div>
+              <div>{proposal.answer.why}</div>
+              <div className="drop-gap-seen">
+                {JSON.stringify(proposal.candidate.properties)}
+              </div>
+              <div className="drop-gap-seen">
+                addressable as {JSON.stringify(proposal.candidate.target?.definition)}
+                {' '}({proposal.candidate.robustness})
+              </div>
+              <div className="drop-gap-proposal-actions">
+                <button className="btn btn-primary btn-sm" disabled={busy}
+                        onClick={onAcceptProposal}>Use it</button>
+                <button className="btn btn-ghost btn-sm"
+                        onClick={onDismissProposal}>No</button>
+              </div>
+            </div>
+          ) : null
+        )}
         {shot && (
           <button type="button" className="drop-gap-shot"
                   title="what was on screen when this event was lost — click to enlarge"
@@ -209,6 +242,16 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
             </button>
           )
         )}
+        {llmReady && !armed && !someoneElseArmed && !mine && (
+          <button
+            className="btn btn-accent btn-sm"
+            disabled={busy}
+            title="show the model the objects the recorder found and let it say which one"
+            onClick={() => onAskModel(data.index)}
+          >
+            Ask the model
+          </button>
+        )}
         <button
           className="btn btn-ghost btn-sm"
           disabled={busy || armed || someoneElseArmed}
@@ -225,7 +268,9 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
 export default function LiveScriptEditor({ script, onChange, onApply, onPoint,
                                            onPickNow, onCancelPoint, onWriteCode,
                                            shotFor, onOpenShot, canPoint, picking,
-                                           arming, readOnly, busy }) {
+                                           arming, readOnly, busy, llmReady,
+                                           onAskModel, proposal, onAcceptProposal,
+                                           onDismissProposal }) {
   // Derived during render, not held in state. The script prop is the single
   // source of truth: an edit goes up through onChange and comes back down as
   // new text, so keeping a parsed copy in state only added a second render per
@@ -344,6 +389,11 @@ export default function LiveScriptEditor({ script, onChange, onApply, onPoint,
                 onPickNow={onPickNow}
                 arming={arming}
                 onOpenShot={onOpenShot}
+                llmReady={llmReady}
+                onAskModel={onAskModel}
+                proposal={proposal}
+                onAcceptProposal={onAcceptProposal}
+                onDismissProposal={onDismissProposal}
                 onCancelPoint={onCancelPoint}
                 onApply={onApply}
                 shot={shotFor ? shotFor(part.data.index) : null}

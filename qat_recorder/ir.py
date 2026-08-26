@@ -219,6 +219,12 @@ class Drop:
     #: the session has ended and the application is gone: it was checked when it
     #: could be checked.
     suggestion: dict = field(default_factory=dict)
+    #: Everything known about the object while the application was still there:
+    #: what the filter reported, which sibling it was, every object of the same
+    #: class with a resolved Target where one exists, and the text next to each.
+    #: Gathered once, at the moment of the drop, because none of it can be got
+    #: back afterwards -- see evidence.py.
+    evidence: dict = field(default_factory=dict)
     #: File name of the still taken when the event was lost. The reason says why
     #: the recorder failed; this says what the operator was looking at, which is
     #: the part nobody can reconstruct afterwards.
@@ -237,6 +243,7 @@ class Drop:
             "t": round(self.t, 4),
             "matched": self.matched,
             "suggestion": dict(self.suggestion),
+            "evidence": dict(self.evidence),
             "shot": self.shot,
             "repaired": self.repaired,
         }
@@ -252,6 +259,7 @@ class Drop:
             t=float(data.get("t", 0.0)),
             matched=int(data.get("matched", -1)),
             suggestion=dict(data.get("suggestion", {})),
+            evidence=dict(data.get("evidence", {})),
             shot=data.get("shot", ""),
             repaired=bool(data.get("repaired", False)),
         )
