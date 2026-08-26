@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from qat_recorder.capture import CaptureSession
+from qat_recorder.capture import CaptureSession, dropped_report
 from qat_recorder.emit import emit_gherkin, emit_python, emit_steps
 from qat_recorder.emit.python import DROP_MARKER, emit_object_map
 from qat_recorder.ir import Action, ActionKind, Drop, Recording
@@ -467,3 +467,123 @@ def test_the_resolver_is_asked_before_the_reported_properties():
     assert suggestion, "the resolver can place this and was not asked"
     assert suggestion["robustness"] == "fragile", "and it says what that is worth"
     assert suggestion["index"] == 1
+
+
+# --- what is a gap, and what is merely not a step --------------------------
+
+def _feed(events, tree=None):
+    backend, _ = tree if tree else build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed_all(events)
+    return capture, capture.finish()
+
+
+def test_scrolling_is_not_a_gap():
+    """The bug that made the panel unusable.
+
+    A wheel event fires every few milliseconds while a list is scrolled, and
+    every one is dropped on purpose -- there is no step to record and nothing
+    for anyone to fix. Each became a gap: an interruption in the script asking
+    the operator to repair a decision the recorder got right, a screenshot, and
+    a lookup against the running application, several times a second.
+    """
+    from tests.test_capture import event
+
+    from tests.test_no_geometry import sliders
+
+    capture, recording = _feed(
+        [event("wheel", 1000 + n * 40, "QListWidget", "torrentList", dy=-120)
+         for n in range(25)],
+        tree=sliders())
+
+    assert recording.drops == [], "scrolling asked 25 questions nobody can answer"
+    assert capture.unresolved == 25, "and it is still counted and explained"
+    assert "scrolling is navigation" in dropped_report(capture.failures)
+
+
+def test_a_drag_with_nothing_to_record_is_not_a_gap():
+    from tests.test_capture import event
+
+    capture, recording = _feed([
+        event("mouse_release", 1000, "QWidget", "canvas", button=1),
+    ])
+    assert [drop.reason for drop in recording.drops] == [] or all(
+        "drag" not in drop.reason for drop in recording.drops)
+
+
+def test_a_click_on_a_scrollbar_is_not_a_gap():
+    capture, recording = _feed(click_pair(1000, "QScrollBar", "qt_scrollarea_vcontainer"))
+    assert recording.drops == []
+    assert capture.unresolved > 0
+
+
+def test_an_event_that_should_have_been_a_step_is_still_a_gap():
+    """The other half: the distinction has to cut, not just exclude."""
+    _, recording = _feed(click_pair(200, *NOWHERE))
+    assert len(recording.drops) == 1
+
+
+def test_checking_a_gap_does_not_disturb_the_next_one():
+    """_resolve records why it failed in a field the folder reads afterwards.
+
+    Asking it again, after the fact, to see whether a fix could be offered
+    overwrote that -- so the next event's reason could be borrowed from an
+    enquiry about the previous one.
+    """
+    from tests.test_capture import event
+
+    backend, _ = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed_all(click_pair(100, *NOWHERE))
+    first = capture.failures[0]
+    capture.feed_all(click_pair(400, "QNotEither", "alsoNothing"))
+    assert capture.failures[0] == first
+    assert "alsoNothing" in capture.failures[-1]
+
+
+def test_two_clicks_on_the_same_control_are_two_gaps():
+    """Folding is about a press and its release, not about timing.
+
+    Merging anything that landed within half a second of the last gap swallowed
+    genuine repeat clicks -- three attempts at the same unnameable control
+    became one, and the operator was never asked about the other two.
+    """
+    from tests.test_capture import event
+
+    backend, _ = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    at = 1000
+    for _ in range(3):
+        capture.feed_all(click_pair(at, *NOWHERE))
+        at += 300                          # a person clicking three times
+    recording = capture.finish()
+
+    assert len(recording.drops) == 3
+    assert all(drop.kind == "mouse_press" for drop in recording.drops), (
+        "each gap is the press; its release is folded into it")
+
+
+def test_a_realistic_session_asks_only_about_what_matters():
+    """Eight steps, a minute of scrolling, three unnameable clicks.
+
+    Before drops were classified this produced sixty-six gaps, sixty-six
+    interruptions in the generated script and a screenshot for each.
+    """
+    from tests.test_capture import event
+    from tests.test_no_geometry import sliders
+
+    backend, _ = sliders()
+    capture = CaptureSession(backend, app_name="sample")
+    at = 1000
+    for _ in range(8):
+        capture.feed_all(click_pair(at, "QPushButton", "loginButton")); at += 200
+    for _ in range(60):
+        capture.feed(event("wheel", at, "QListWidget", "torrentList", dy=-120))
+        at += 30
+    for _ in range(3):
+        capture.feed_all(click_pair(at, *NOWHERE)); at += 300
+    recording = capture.finish()
+
+    assert capture.unresolved == 66, "everything lost is still counted"
+    assert len(recording.drops) == 3, "but only three of them are questions"
+    assert emit_python(recording).count(DROP_MARKER) == 3

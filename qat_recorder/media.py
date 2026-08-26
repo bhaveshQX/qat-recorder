@@ -33,6 +33,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +45,17 @@ FRAMERATE = 10
 #: ffmpeg gets this long to finish writing the file after being asked to stop.
 #: It has to flush and close the container; killed halfway, the mp4 is unplayable.
 CLOSE_TIMEOUT_S = 10.0
+
+#: Gaps arrive in bursts -- six unnamed check boxes in one dialog are six gaps a
+#: second apart, all looking at the same screen. Six identical photographs of it
+#: is disk, bandwidth and noise for no information, so within this window the
+#: previous one is reused.
+SAME_SCREEN_S = 1.5
+
+#: A hard ceiling, because a session is minutes long and nobody is watching the
+#: disk. Past it, the gaps still get recorded; they just stop being photographed
+#: and the listing says so.
+MAX_STILLS = 200
 
 
 def _display() -> str:
@@ -64,6 +76,10 @@ class SessionMedia:
         self._process: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._shots = 0
+        self._last_shot = ""
+        self._last_shot_at = 0.0
+        #: Said once, not once per attempt.
+        self.still_note = ""
 
     # -- stills ------------------------------------------------------------
 
@@ -95,6 +111,26 @@ class SessionMedia:
     def take_numbered(self, prefix: str) -> str:
         """A still named so the order it was taken in survives a directory listing."""
         return self.take(f"{prefix}-{self._shots:03d}")
+
+    def take_for_gap(self, prefix: str) -> str:
+        """A picture of the screen a gap happened on -- or the last one.
+
+        Two gaps a few hundred milliseconds apart are looking at the same
+        screen. Photographing it twice costs a file and tells nobody anything,
+        so within SAME_SCREEN_S the previous still is what the second gap gets.
+        """
+        now = time.monotonic()
+        if self._last_shot and now - self._last_shot_at <= SAME_SCREEN_S:
+            return self._last_shot
+        if self._shots >= MAX_STILLS:
+            self.still_note = (
+                f"stopped after {MAX_STILLS} stills; the gaps are still "
+                "recorded, they just have no picture")
+            return ""
+        name = self.take_numbered(prefix)
+        if name:
+            self._last_shot, self._last_shot_at = name, now
+        return name
 
     def stills(self) -> list:
         if not self.shots_dir.is_dir():
@@ -178,6 +214,7 @@ class SessionMedia:
             "video": video.name if video else "",
             "video_bytes": video.stat().st_size if video else 0,
             "video_note": self.video_note,
+            "still_note": self.still_note,
             "filming": self.filming,
         }
 

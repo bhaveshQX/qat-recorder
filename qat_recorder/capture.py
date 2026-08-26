@@ -82,6 +82,9 @@ BUTTON_NAMES = {1: "left", 2: "right", 4: "middle"}
 #: same window flush_stale() uses to group events that arrived together.
 _SAME_INTERACTION_S = 0.5
 
+#: What can arrive as the tail of a press and belongs to the same interaction.
+_CLOSES_A_PRESS = frozenset({"mouse_release", "mouse_double"})
+
 #: Menus are operated by pressing on the bar and releasing on an item, which
 #: looks exactly like a drag and is nothing like one.
 MENU_HINTS = ("Menu", "Action")
@@ -257,6 +260,14 @@ def value_property(class_name: str) -> str:
         if name == candidate or name.endswith(candidate):
             return prop
     return ""
+
+#: Reasons that mean "this was never going to be a step", as opposed to "this
+#: should have been one and could not be". Both are counted in unresolved.txt --
+#: the operator is entitled to know a scroll was seen and discarded -- but only
+#: the second kind is a *gap*: something missing from the test that somebody has
+#: to decide about. The first kind needs no decision, no screenshot, and no
+#: interruption in the middle of the generated script.
+DELIBERATE = frozenset({CHROME, SCROLLING, DRAGGING})
 
 NO_OWNER = ("one of Qt's own internal widgets, with no application widget "
             "above it to attribute the click to")
@@ -1313,12 +1324,21 @@ class CaptureSession:
         position is new, and it is the whole difference between "two events were
         lost during this session" and a gap the operator can see between the two
         steps it fell between.
+
+        Not every dropped event is a gap, and conflating the two made the panel
+        unusable. Scrolling a list fires a wheel event every few milliseconds
+        and every one of them is dropped *on purpose* -- there is no step to
+        record and nothing for anybody to fix. Turning each into a gap meant a
+        script full of interruptions asking the operator to repair a decision
+        the recorder had made correctly, a screenshot for each, and a lookup
+        against the running application for each, several times a second.
         """
         self.unresolved += 1
         why = reason or self._last_reason or "unresolved"
         label = describe(event.target)
         self.failures.append(f"{event.kind} on {label}: {why}")
-        self._record_drop(event, why, label)
+        if why not in DELIBERATE:
+            self._record_drop(event, why, label)
 
     def _record_drop(self, event: RawEvent, why: str, label: str) -> None:
         """Place the gap, folding a press and its release into one.
@@ -1345,10 +1365,16 @@ class CaptureSession:
         )
         if self.recording.drops:
             previous = self.recording.drops[-1]
-            same_gap = (previous.after == drop.after
-                        and previous.label == drop.label
-                        and previous.reason == drop.reason)
-            if same_gap and abs(drop.t - previous.t) <= _SAME_INTERACTION_S:
+            # A press and the release that closes it are one interaction, so
+            # they are one gap. Two separate clicks on the same control are two,
+            # even a fifth of a second apart -- folding those on timing alone
+            # lost gaps the operator had to answer for.
+            same_interaction = (previous.after == drop.after
+                                and previous.label == drop.label
+                                and previous.reason == drop.reason
+                                and previous.kind == "mouse_press"
+                                and drop.kind in _CLOSES_A_PRESS)
+            if same_interaction and abs(drop.t - previous.t) <= _SAME_INTERACTION_S:
                 return
         self.recording.add_drop(drop)
 
@@ -1372,10 +1398,16 @@ class CaptureSession:
         box in the dialog, and offering it produced scripts that failed on their
         first run with "Multiple objects found that match this definition".
         """
+        # _resolve records why it failed in _last_reason, and what the step
+        # should say about itself in _last_note. Both belong to the event being
+        # folded, not to this after-the-fact enquiry, so they are put back.
+        keep_reason, keep_note = self._last_reason, self._last_note
         try:
             resolved = self._resolve(event.target)
         except Exception:                                    # noqa: BLE001
             resolved = None
+        finally:
+            self._last_reason, self._last_note = keep_reason, keep_note
         if resolved is not None:
             _, target = resolved
             if target.robustness is not Robustness.UNRESOLVED:

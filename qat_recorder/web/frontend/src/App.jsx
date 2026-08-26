@@ -106,7 +106,19 @@ export default function App() {
                  mismatch: !!(mine && d.ui_build && mine !== d.ui_build) });
       if (d.default_lib) setLibPath(prev => prev || d.default_lib);
       
-      updateStatus(`Connected to ${d.host || cleanUrl}`);
+      // The agent may already be holding a recording -- the browser was
+      // reloaded, or a second tab opened. Rejoin it, rather than leaving the
+      // panel blank and answering Record with "a recording is in progress".
+      if (d.session?.session_id) {
+        setSessionId(d.session.session_id);
+        setState(d.session.state || S.RECORDING);
+        setAppName(prev => prev || d.session.app || '');
+        connectWs(d.session.session_id);
+        setRefreshTick(tick => tick + 1);
+        updateStatus(`Rejoined the recording already running on ${d.host || 'the agent'}`);
+      } else {
+        updateStatus(`Connected to ${d.host || cleanUrl}`);
+      }
       setDetails(`Connected to ${d.host || 'agent'}\nProtocol v${d.protocol || '?'}`);
     } catch (e) {
       setConnected(false);
@@ -653,6 +665,9 @@ export default function App() {
                     <div className="screen-heading">
                       Stills ({media.stills?.length || 0}) — one at every gap, plus any you took
                     </div>
+                    {media.still_note && (
+                      <div className="screen-note">{media.still_note}</div>
+                    )}
                     {media.stills?.length ? (
                       <div className="screen-strip">
                         {media.stills.map(name => (

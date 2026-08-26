@@ -168,3 +168,93 @@ def test_a_session_keeping_no_media_still_records(controller):  # noqa: F811
     assert controller.media is None
     _record_a_gap(controller)
     assert controller.recording.drops[0].shot == ""
+
+
+# --- not once a second, forever --------------------------------------------
+
+def test_a_gap_that_cannot_be_photographed_is_not_retried(controller, tmp_path):  # noqa: F811
+    """The log spam.
+
+    Retrying anything without a picture on every tick of the pump meant a
+    failing screenshot was attempted several times a second for the length of
+    the session, logging each time.
+    """
+    camera = FakeQat(works=False)
+    controller.media = SessionMedia(tmp_path, qat_module=camera,
+                                    record_video=False)
+    _record_a_gap(controller)
+    attempts = len(camera.asked)
+
+    for _ in range(20):
+        controller.poll()
+
+    assert len(camera.asked) == attempts == 1, (
+        "the camera was asked again for a gap it had already failed on")
+
+
+def test_gaps_in_the_same_second_share_one_picture(tmp_path):
+    """Six unnamed check boxes in one dialog are six gaps looking at one screen."""
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
+    names = [media.take_for_gap(f"gap-{n}") for n in range(6)]
+
+    assert len(set(names)) == 1, "six identical photographs of the same screen"
+    assert len(media.stills()) == 1
+
+
+def test_a_gap_much_later_gets_its_own_picture(tmp_path, monkeypatch):
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
+    clock = [1000.0]
+    monkeypatch.setattr("qat_recorder.media.time.monotonic", lambda: clock[0])
+
+    first = media.take_for_gap("gap-0")
+    clock[0] += 60.0                      # a minute later, a different screen
+    second = media.take_for_gap("gap-1")
+
+    assert first and second and first != second
+    assert len(media.stills()) == 2
+
+
+def test_the_camera_stops_at_the_ceiling(tmp_path, monkeypatch):
+    """A session is minutes long and nobody is watching the disk."""
+    monkeypatch.setattr("qat_recorder.media.MAX_STILLS", 3)
+    media = SessionMedia(tmp_path, qat_module=FakeQat(), record_video=False)
+    clock = [1000.0]
+    monkeypatch.setattr("qat_recorder.media.time.monotonic", lambda: clock[0])
+
+    taken = []
+    for index in range(8):
+        clock[0] += 60.0
+        taken.append(media.take_for_gap(f"gap-{index}"))
+
+    assert len([name for name in taken if name]) == 3
+    assert "stopped after 3 stills" in media.describe()["still_note"]
+    assert "still recorded" in media.describe()["still_note"]
+
+
+def test_scrolling_is_never_photographed(tmp_path):
+    """Because scrolling is not a gap, nothing asks for a picture of it.
+
+    Built with a tree that actually has a list to scroll -- otherwise the wheel
+    lands on nothing, which is a real gap and rightly does get photographed.
+    """
+    from qat_recorder.ui.controller import RecorderController
+    from tests.test_capture import event
+    from tests.test_no_geometry import sliders
+    from tests.test_ui_controller import FakeQat as ControllerQat, FakeReceiver
+
+    backend, _ = sliders()
+    receiver = FakeReceiver()
+    controller = RecorderController(
+        ControllerQat(), lib_path="/tmp/lib.so", app_path="/tmp/app",
+        app_name="sample", backend=backend, receiver=receiver)
+
+    camera = FakeQat()
+    controller.media = SessionMedia(tmp_path, qat_module=camera,
+                                    record_video=False)
+    controller.start()
+    receiver.push(*[event("wheel", 1000 + n * 40, "QListWidget", "torrentList",
+                          dy=-120) for n in range(25)])
+    controller.poll()
+
+    assert camera.asked == [], "scrolling a list photographed the screen"
+    assert controller.recording.drops == []

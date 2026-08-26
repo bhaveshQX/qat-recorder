@@ -121,6 +121,10 @@ class RecorderController:
         #: The gap the next picked object fills, or None when picking is for a
         #: checkpoint. Set by arm_repair, cleared by the pick itself.
         self._repairing: Optional[int] = None
+        #: How far down the drop list the camera has got. A count, not a set of
+        #: successes: a gap that could not be photographed stays unphotographed
+        #: rather than being retried on every tick of the pump.
+        self._photographed = 0
         self.picked_target = None
         self.picked_node = None
         self.picked_properties: dict = {}
@@ -191,6 +195,7 @@ class RecorderController:
                                       app_path=self.app_path)
         self.events_seen = 0
         self.events_dropped = 0
+        self._photographed = 0
         if self.media is not None:
             # Only when nobody supplied one: whoever built the media holder may
             # know better than this controller does, and a test certainly does.
@@ -392,10 +397,15 @@ class RecorderController:
         """
         if self.media is None or self.recording is None:
             return
-        for index, drop in enumerate(self.recording.drops):
-            if drop.shot:
-                continue
-            drop.shot = self.media.take_numbered(f"gap-{index}")
+        drops = self.recording.drops
+        # Only the ones that have appeared since the last look. Walking the
+        # whole list and retrying anything without a picture meant a failing
+        # screenshot was attempted again on every tick of the pump -- several
+        # times a second, forever, each one logging.
+        while self._photographed < len(drops):
+            index = self._photographed
+            self._photographed += 1
+            drops[index].shot = self.media.take_for_gap(f"gap-{index}")
 
     def _process(self, event: RawEvent) -> None:
         if self._state is State.PAUSED:
