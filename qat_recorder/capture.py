@@ -1353,7 +1353,6 @@ class CaptureSession:
             ("text", event.target.text),
         ) if value}
         matched, suggestion = self._check_now(event, seen)
-        evidence = self._evidence_for(event, why)
         drop = Drop(
             reason=why,
             kind=event.kind,
@@ -1361,9 +1360,12 @@ class CaptureSession:
             seen=seen,
             after=len(self.recording.actions),
             t=self._elapsed(event.t),
+            sibling_index=event.target.index,
+            path=[{"class": cls, "objectName": name}
+                  for cls, name in (event.target.path or ())],
             matched=matched,
             suggestion=suggestion,
-            evidence=evidence,
+            # Deliberately not gathered here. See _evidence_for.
         )
         if self.recording.drops:
             previous = self.recording.drops[-1]
@@ -1380,14 +1382,27 @@ class CaptureSession:
                 return
         self.recording.add_drop(drop)
 
-    def _evidence_for(self, event: RawEvent, why: str) -> dict:
-        """Write down what the application knows, while it still knows it."""
+    def evidence_for(self, locator, why: str, kind: str = "") -> dict:
+        """Everything the application can say about the object, asked for now.
+
+        Emphatically *not* called while folding an event. It enumerates every
+        object of the class, resolves each one against the running application
+        and measures the text around it -- one dropped event cost a hundred and
+        seventy-nine round trips on a synthetic tree of nine widgets, and every
+        one of those is a socket round trip on a real machine. Doing that inside
+        the poll loop, which holds the session lock, stalled the recorder and
+        every request the panel made for as long as it took.
+
+        The price of asking later is that the application may have moved on. It
+        is worth paying: the cheap half -- the resolver's own attempt, which is
+        cached -- still happens at the moment of the drop, and that is the half
+        that produces a checked fix.
+        """
         from qat_recorder.evidence import gather              # noqa: PLC0415
 
         keep_reason, keep_note = self._last_reason, self._last_note
         try:
-            return gather(self.backend, self.resolver, event.target, why,
-                          kind=event.kind)
+            return gather(self.backend, self.resolver, locator, why, kind=kind)
         except Exception:                                     # noqa: BLE001
             return {}
         finally:

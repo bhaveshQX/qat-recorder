@@ -406,10 +406,20 @@ class Agent:
             if not 0 <= index < len(drops):
                 raise AgentError(f"no gap at {index}", 404)
             drop = drops[index]
+            # Gathered here rather than when the event was lost, and remembered
+            # so it is gathered once. Enumerating every object of the class and
+            # resolving each one costs hundreds of round trips to the
+            # application; doing that in the poll loop, which holds this lock,
+            # stalled the recorder and every request the panel made.
+            if not drop.evidence:
+                capture = getattr(session.controller, "session", None)
+                if capture is not None:
+                    drop.evidence = capture.evidence_for(
+                        drop.locator_or_none(), drop.reason, drop.kind)
             return {"index": index, "kind": drop.kind, "label": drop.label,
                     "reason": drop.reason, "shot": drop.shot,
                     "after": drop.after,
-                    "evidence": dict(drop.evidence, after=drop.after)}
+                    "evidence": dict(drop.evidence or {}, after=drop.after)}
 
     def media_file(self, session_id: str, name: str):
         """The bytes of one still or the video, as a path. Never escapes."""

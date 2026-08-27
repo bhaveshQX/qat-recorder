@@ -162,9 +162,9 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
         {Object.keys(def).length > 0 && (
           <div className="drop-gap-seen">{JSON.stringify(def)}</div>
         )}
-        {data.closed_as && (
+        {(data.closed_as || (data.reported_as && !data.usable)) && (
           <div className="drop-gap-note">
-            Closes it as <code>{JSON.stringify(data.closed_as)}</code>. This is the
+            Addresses it as <code>{JSON.stringify(data.closed_as || data.reported_as)}</code>. This is the
             one repair that cannot be checked first — the window is gone — so the
             replay is what proves it. Keep runs the test once before it enters the
             library, which is where a wrong name shows up.
@@ -258,14 +258,15 @@ function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,
       </div>
 
       <div className="drop-gap-actions">
-        {data.closed_as && !armed && !someoneElseArmed && (
+        {(data.closed_as || (data.reported_as && !data.usable))
+          && !armed && !someoneElseArmed && (
           <button
             className="btn btn-primary btn-sm"
             disabled={busy}
-            title={`inserts close() on ${JSON.stringify(data.closed_as)} — not checked, because the window is gone`}
+            title={`inserts a step on ${JSON.stringify(data.closed_as || data.reported_as)} — not checked, because the application can no longer be asked`}
             onClick={() => onCloseWindow(data.index)}
           >
-            Close it by name
+            {data.closed_as ? 'Close it by name' : 'Use what was reported'}
             <span style={{ color: 'var(--color-weak)', fontSize: 11 }}>(unchecked)</span>
           </button>
         )}

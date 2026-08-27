@@ -929,11 +929,15 @@ export default function App() {
                     {view.stills?.length ? (
                       <div className="screen-strip">
                         {view.stills.map(name => (
-                          <div key={name} title={name}>
+                          <button key={name} type="button" title={`${name} — click to enlarge`}
+                                  className="strip-shot"
+                                  onClick={() => setLightbox({
+                                    base: agentUrl, sid: sessionId, name, token,
+                                    testId: showingTest ? openTest.id : null })}>
                             <MediaImage base={agentUrl} sid={sessionId}
                                         testId={showingTest ? openTest.id : null}
                                         name={name} token={token} alt={name} thumb />
-                          </div>
+                          </button>
                         ))}
                       </div>
                     ) : (

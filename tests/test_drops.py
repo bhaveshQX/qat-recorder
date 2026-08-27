@@ -602,12 +602,14 @@ def test_a_realistic_session_asks_only_about_what_matters():
 def test_a_gap_records_what_the_application_knew():
     """The prerequisite for any repair at all, human or otherwise.
 
-    A gap is dealt with minutes later, often after the application is gone. By
-    then the only things that can identify the control are the ones somebody
-    wrote down while it was still there.
+    Asked for rather than taken while folding: enumerating every object of the
+    class and resolving each one cost a hundred and seventy-nine round trips on
+    a tree of nine widgets, and the poll loop holds the session lock.
     """
-    _, recording = _feed(click_pair(200, "QPushButton", text="Apply"))
-    pack = recording.drops[0].evidence
+    capture, recording = _feed(click_pair(200, "QPushButton", text="Apply"))
+    drop = recording.drops[0]
+    assert drop.evidence == {}, "gathered in the poll loop after all"
+    pack = capture.evidence_for(drop.locator_or_none(), drop.reason, drop.kind)
 
     assert pack["class"] == "QPushButton"
     assert pack["reason"]
@@ -635,6 +637,8 @@ def test_choosing_a_candidate_inserts_the_target_the_recorder_resolved(controlle
     controller._test["receiver"].push(*click_pair(200, "QPushButton", text="Apply"))
     controller.poll()
     drop = controller.recording.drops[0]
+    drop.evidence = controller.session.evidence_for(
+        drop.locator_or_none(), drop.reason, drop.kind)
 
     addressable = [one for one in drop.evidence["candidates"] if one["target"]]
     assert addressable, "nothing in this application could be addressed at all"
@@ -654,17 +658,26 @@ def test_an_id_that_is_not_in_the_evidence_is_refused(controller):  # noqa: F811
     controller._test["receiver"].push(*click_pair(200, "QPushButton", text="Apply"))
     controller.poll()
 
+    controller.recording.drops[0].evidence = controller.session.evidence_for(
+        controller.recording.drops[0].locator_or_none(), "", "")
     with pytest.raises(ControllerError) as raised:
         controller.repair_choose(0, 999)
     assert "not one" in str(raised.value)
     assert controller.recording.open_drops(), "the gap is still open"
 
 
-def test_evidence_survives_recording_json():
-    """It has to outlive the session: that is the whole point of writing it down."""
+def test_a_gap_remembers_how_to_be_asked_about_later():
+    """The evidence is gathered on demand, so the drop has to carry the way back
+    to the object -- its class, its text, which sibling it was, and what
+    contained it."""
     _, recording = _feed(click_pair(200, "QPushButton", text="Apply"))
     again = Recording.loads(recording.dumps())
-    assert again.drops[0].evidence["candidates"]
+    drop = again.drops[0]
+
+    assert drop.seen["class"] == "QPushButton"
+    locator = drop.locator_or_none()
+    assert locator.cls == "QPushButton"
+    assert locator.index == drop.sibling_index
 
 
 # --- a window that is gone by definition -----------------------------------
@@ -687,9 +700,12 @@ def test_a_closed_window_keeps_the_name_it_was_closed_under(controller):  # noqa
     controller.poll()
 
     drop, = controller.recording.drops
+    drop.evidence = controller.session.evidence_for(
+        drop.locator_or_none(), drop.reason, drop.kind)
     assert drop.evidence["candidates"] == [], "the window really is gone"
     assert drop.evidence["closed_proposal"] == {
-        "type": "TorrentCreatorDialog", "objectName": "TorrentCreatorDialog"}
+        "type": "TorrentCreatorDialog", "objectName": "TorrentCreatorDialog",
+        "container": {"objectName": "MainWindow"}}
 
     controller.repair_closed(0)
     filled = controller.recording.actions[-1]
@@ -720,6 +736,9 @@ def test_the_marker_tells_the_panel_a_window_can_be_closed_by_name(controller): 
     controller._test["receiver"].push(
         event("close_window", 500, "TorrentCreatorDialog", "TorrentCreatorDialog"))
     controller.poll()
+    drop = controller.recording.drops[0]
+    drop.evidence = controller.session.evidence_for(
+        drop.locator_or_none(), drop.reason, drop.kind)
 
     line, = _marker_lines(emit_python(controller.recording))
     payload = json.loads(line.split(DROP_MARKER, 1)[1])
@@ -749,3 +768,58 @@ def test_aligned_text_outranks_merely_close_text():
 
     assert _DIRECTION_RANK["to the left, same row"] < _DIRECTION_RANK["nearby"]
     assert _DIRECTION_RANK["above, same column"] < _DIRECTION_RANK["nearby"]
+
+
+def test_folding_a_dropped_event_does_not_interrogate_the_application():
+    """The reason the panel stalled after the first gap.
+
+    Enumerating every object of the class and resolving each one costs hundreds
+    of round trips to the application, and folding happens inside the poll loop,
+    which holds the session lock every request waits on. One gap took the
+    recorder, the panel and its socket down together for as long as it ran.
+    """
+    backend, _ = build_tree()
+    trips = {"n": 0}
+    for name in ("find_all", "properties", "parent"):
+        original = getattr(backend, name)
+
+        def counted(func):
+            def inner(*args, **kwargs):
+                trips["n"] += 1
+                return func(*args, **kwargs)
+            return inner
+
+        setattr(backend, name, counted(original))
+
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed_all(click_pair(200, "QPushButton", text="Apply"))
+    assert capture.finish().drops, "nothing was dropped, so this proves nothing"
+    assert trips["n"] < 20, (
+        f"folding one dropped event cost {trips['n']} round trips to the "
+        "application, inside the lock the whole panel waits on")
+
+
+def test_what_the_filter_reported_is_offered_when_nothing_can_be_found():
+    """A dialog that has closed takes its buttons with it.
+
+    Every candidate list is then empty and every honest answer is "I cannot see
+    it" -- which is a refusal, not a repair, and is what the model kept saying.
+    The filter named the control on the way past, and the ancestor chain says
+    which dialog it was in.
+    """
+    from qat_recorder.evidence import gather
+    from qat_recorder.events import Locator
+    from qat_recorder.naming import NameResolver
+
+    backend, _ = build_tree()
+    pack = gather(backend, NameResolver(backend),
+                  Locator(cls="QPushButton", text="Cancel",
+                          path=(("QDialogButtonBox", ""),
+                                ("TorrentCreatorDialog", "TorrentCreatorDialog"))),
+                  "could not be found through Qat while it was on screen")
+
+    proposed = pack["reported_proposal"]
+    assert proposed["type"] == "QPushButton"
+    assert proposed["text"] == "Cancel"
+    # Scoped. "The Cancel button" matches every dialog in the application.
+    assert proposed["container"] == {"type": "QDialogButtonBox"}

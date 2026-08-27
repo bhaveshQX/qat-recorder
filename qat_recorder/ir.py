@@ -214,6 +214,11 @@ class Drop:
     seen: dict = field(default_factory=dict)
     #: Index into `actions`: this many steps had been recorded before the drop.
     after: int = 0
+    #: Which of its siblings the filter said it was, and what contained it.
+    #: Kept because the evidence is gathered later, and by then the only way
+    #: back to the object is what was written down here.
+    sibling_index: int = -1
+    path: list = field(default_factory=list)
     t: float = 0.0
     #: How many objects the reported definition matched when the event was lost.
     #: 0 or many is the usual answer -- it is generally *why* it was lost -- and
@@ -240,6 +245,23 @@ class Drop:
     #: is kept so the recording still says what was lost, and emits nothing.
     repaired: bool = False
 
+    def locator_or_none(self):
+        """The locator this drop was reported with, rebuilt.
+
+        Kept so the evidence can be gathered later rather than in the poll loop.
+        The ancestor chain matters as much as the properties: it is what tells
+        a resolver, or a person, *which* dialog the control was in.
+        """
+        from qat_recorder.events import Locator                # noqa: PLC0415
+
+        return Locator(
+            cls=self.seen.get("class", ""),
+            object_name=self.seen.get("objectName", ""),
+            text=self.seen.get("text", ""),
+            index=self.sibling_index,
+            path=tuple((step.get("class", ""), step.get("objectName", ""))
+                       for step in self.path))
+
     def to_dict(self) -> dict:
         return {
             "reason": self.reason,
@@ -247,6 +269,8 @@ class Drop:
             "label": self.label,
             "seen": dict(self.seen),
             "after": self.after,
+            "sibling_index": self.sibling_index,
+            "path": list(self.path),
             "t": round(self.t, 4),
             "matched": self.matched,
             "suggestion": dict(self.suggestion),
@@ -263,6 +287,8 @@ class Drop:
             label=data.get("label", ""),
             seen=dict(data.get("seen", {})),
             after=int(data.get("after", 0)),
+            sibling_index=int(data.get("sibling_index", -1)),
+            path=list(data.get("path", [])),
             t=float(data.get("t", 0.0)),
             matched=int(data.get("matched", -1)),
             suggestion=dict(data.get("suggestion", {})),

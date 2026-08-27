@@ -34,7 +34,7 @@ from qat_recorder.ir import Robustness
 #: Enough to choose from, few enough that resolving each is not a stall. A
 #: dialog with more identical controls than this has a naming problem that no
 #: repair tool should be papering over.
-MAX_CANDIDATES = 25
+MAX_CANDIDATES = 15
 
 #: Properties worth showing a human or a model. Anything that might name the
 #: control, and the geometry -- not to hit-test with, but because "the one in
@@ -49,7 +49,7 @@ LABEL_CLASSES = ("QLabel", "QCheckBox", "QRadioButton", "QGroupBox", "QPushButto
 
 #: How many objects of one class are worth measuring for nearby text. A dialog
 #: has tens of labels, not thousands, and every one costs a walk up its parents.
-MAX_LABELS_PER_CLASS = 40
+MAX_LABELS_PER_CLASS = 20
 
 
 def _readable(backend, node, memo=None) -> dict:
@@ -234,13 +234,29 @@ def gather(backend, resolver, locator, reason: str = "",
     # strongest kind of locator this project has. It cannot be *checked*, which
     # is a different objection from the usual one, and the replay settles it in
     # seconds rather than leaving a gap nobody can ever fill.
-    if kind == "close_window":
-        proposed = {}
-        if class_name:
-            proposed["type"] = class_name
-        if locator.object_name:
-            proposed["objectName"] = locator.object_name
-        if proposed:
+    proposed = {}
+    if class_name:
+        proposed["type"] = class_name
+    if locator.object_name:
+        proposed["objectName"] = locator.object_name
+    elif locator.text:
+        proposed["text"] = locator.text
+    # Scoped by the nearest ancestor that has a name of its own. "The Cancel
+    # button" matches every dialog in the application; "the Cancel button in
+    # TorrentCreatorDialog" matches one, and the ancestor chain is the one thing
+    # the filter always reports.
+    for step_class, step_name in (locator.path or ()):
+        if step_name:
+            proposed["container"] = {"objectName": step_name}
+            break
+        if step_class and step_class not in ("QWidget",):
+            proposed["container"] = {"type": step_class}
+            break
+    if len(proposed) > 1:
+        pack["reported_proposal"] = proposed
+        # Kept under the old name too: the panel offers a closed window a
+        # differently worded button, and that wording is still right.
+        if kind == "close_window":
             pack["closed_proposal"] = proposed
 
     if not class_name:

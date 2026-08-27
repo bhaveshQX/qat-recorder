@@ -162,6 +162,11 @@ class SessionMedia:
         self._worker = None
         #: Said once, not once per attempt.
         self.still_note = ""
+        #: Which of the ways of photographing a screen actually worked.
+        #: Named in the panel, because "the pop-up is missing" and "this
+        #: is a picture of the application, not the screen" are the same
+        #: fact and neither was visible.
+        self.grabber = ""
 
     # -- stills ------------------------------------------------------------
 
@@ -227,6 +232,7 @@ class SessionMedia:
                 frame = camera.grab(camera.monitors[0])
                 mss.tools.to_png(frame.rgb, frame.size, output=str(path))
                 _write_thumbnail(mss.tools, frame, _thumb_path(path))
+                self.grabber = "mss"
         except Exception:                                    # noqa: BLE001
             return False
         return path.is_file() and path.stat().st_size > 0
@@ -252,6 +258,7 @@ class SessionMedia:
             except Exception:                                # noqa: BLE001
                 continue
             if path.is_file() and path.stat().st_size > 0:
+                self.grabber = command[0]
                 return True
         return False
 
@@ -265,6 +272,7 @@ class SessionMedia:
             return False
         if not (path.is_file() and path.stat().st_size > 0):
             return False
+        self.grabber = "qat"
         if not self.still_note:
             self.still_note = (
                 "stills are of the application's own window only, because none "
@@ -449,6 +457,8 @@ class SessionMedia:
             "video": video.name if video else "",
             "video_bytes": video.stat().st_size if video else 0,
             "video_note": self.video_note,
+            "grabber": self.grabber,
+            "still_note": self.still_note,
             "still_note": self.still_note,
             "filming": self.filming,
         }

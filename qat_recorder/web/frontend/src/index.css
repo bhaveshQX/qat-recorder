@@ -1241,3 +1241,18 @@ button.step-shot .media-loading, button.step-shot .media-failed {
   padding: 2px 4px;
   font-size: 9px;
 }
+
+/* A still in the Screen strip. It opens, like every other picture here. */
+button.strip-shot {
+  display: block;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+}
+
+button.strip-shot:hover { border-color: var(--accent); }
+button.strip-shot img { width: 100%; height: auto; display: block; }
