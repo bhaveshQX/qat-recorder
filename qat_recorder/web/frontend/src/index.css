@@ -1,64 +1,62 @@
 /* ═══════════════════════════════════════════════════════════════
    QAT Recorder — Design System
-   Premium dark glassmorphism theme
+   Light, violet-accented, to sit alongside the rest of the suite
    ═══════════════════════════════════════════════════════════════ */
 
 /* ─── Tokens ────────────────────────────────────────────────── */
 :root {
-  /* Surface */
-  --bg-base:        #0c0e14;
-  --bg-surface:     #13151e;
-  --bg-elevated:    #1a1d2b;
-  --bg-overlay:     rgba(19, 21, 30, 0.85);
-  --bg-glass:       rgba(26, 29, 43, 0.55);
-  --border-subtle:  rgba(255, 255, 255, 0.06);
-  --border-medium:  rgba(255, 255, 255, 0.10);
-  --border-focus:   rgba(124, 92, 252, 0.5);
+  /* Surface. Three steps only: the page, the panels on it, and the things
+     that sit inside those. More than three and nothing reads as grouped. */
+  --bg-base:        #f7f6fd;
+  --bg-surface:     #ffffff;
+  --bg-elevated:    #faf9ff;
+  --bg-overlay:     rgba(255, 255, 255, 0.92);
+  --bg-glass:       rgba(255, 255, 255, 0.75);
+  --border-subtle:  #ece9f7;
+  --border-medium:  #ded8f0;
+  --border-focus:   rgba(124, 58, 237, 0.45);
 
   /* Text */
-  --text-primary:   #e8eaf0;
-  --text-secondary: #8b8fa4;
-  --text-muted:     #555872;
-  --text-inverse:   #0c0e14;
+  --text-primary:   #1b1733;
+  --text-secondary: #6b6785;
+  --text-muted:     #9a96b0;
+  --text-inverse:   #ffffff;
 
-  /* Accent */
-  --accent:         #7c5cfc;
-  --accent-hover:   #9478ff;
-  --accent-glow:    rgba(124, 92, 252, 0.25);
-  --accent-gradient: linear-gradient(135deg, #7c5cfc 0%, #00d4aa 100%);
+  --accent:         #7c3aed;
+  --accent-hover:   #6d28d9;
+  --accent-soft:    #f3eeff;
+  --accent-glow:    rgba(124, 58, 237, 0.18);
+  --accent-gradient: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
 
-  /* Semantic — robustness palette (same as PySide panel) */
-  --color-strong:     #5fd3aa;
-  --color-moderate:   #7cc0f0;
-  --color-weak:       #f0b95c;
-  --color-fragile:    #ff8b5e;
-  --color-unresolved: #ff7b7b;
+  /* Robustness. Darkened from the dark theme's palette: the same hues on
+     white are washed out and unreadable at eleven pixels. */
+  --color-strong:     #0f9d6e;
+  --color-moderate:   #2563eb;
+  --color-weak:       #b45309;
+  --color-fragile:    #c2410c;
+  --color-unresolved: #dc2626;
 
-  /* Status */
-  --color-success:  #5fd3aa;
-  --color-danger:   #ff5c6e;
-  --color-warning:  #f0b95c;
+  --color-success:  #0f9d6e;
+  --color-danger:   #dc2626;
+  --color-warning:  #b45309;
 
-  /* Buttons */
   --btn-primary-bg:    var(--accent);
   --btn-primary-hover: var(--accent-hover);
-  --btn-danger-bg:     #e03e50;
-  --btn-danger-hover:  #ff5c6e;
-  --btn-ghost-hover:   rgba(255, 255, 255, 0.06);
+  --btn-danger-bg:     #dc2626;
+  --btn-danger-hover:  #b91c1c;
+  --btn-ghost-hover:   var(--accent-soft);
 
-  /* Radii */
-  --radius-sm:  6px;
+  --radius-sm:  8px;
   --radius-md:  10px;
   --radius-lg:  14px;
-  --radius-xl:  18px;
+  --radius-xl:  999px;
 
-  /* Shadows */
-  --shadow-sm:  0 1px 3px rgba(0,0,0,0.3);
-  --shadow-md:  0 4px 16px rgba(0,0,0,0.4);
-  --shadow-lg:  0 8px 32px rgba(0,0,0,0.5);
-  --shadow-glow: 0 0 20px var(--accent-glow);
+  /* Shadows carry the depth the dark theme got from contrast. */
+  --shadow-sm:  0 1px 2px rgba(27, 23, 51, 0.06);
+  --shadow-md:  0 4px 16px rgba(27, 23, 51, 0.08);
+  --shadow-lg:  0 12px 32px rgba(27, 23, 51, 0.12);
+  --shadow-glow: 0 4px 14px rgba(124, 58, 237, 0.28);
 
-  /* Timing */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-fast: 150ms;
   --duration-normal: 250ms;
@@ -110,6 +108,7 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .logo {
@@ -118,8 +117,26 @@ body {
   gap: 10px;
 }
 
+/* The mark is an SVG with its own intrinsic size, which is enormous. Without
+   a height it rendered a third of the window tall and pushed the whole header
+   off screen. */
+.logo-mark {
+  display: block;
+  height: 26px;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.logo-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-medium);
+  flex-shrink: 0;
+}
+
 .logo h1 {
   font-size: 16px;
+  white-space: nowrap;
   font-weight: 600;
   background: var(--accent-gradient);
   -webkit-background-clip: text;
@@ -129,6 +146,7 @@ body {
 }
 
 .badge {
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 500;
   padding: 2px 10px;
@@ -137,13 +155,14 @@ body {
 }
 
 .badge-muted {
-  background: rgba(255,255,255,0.06);
+  background: var(--accent-soft);
   color: var(--text-secondary);
 }
 
 .status-indicator {
   display: flex;
   align-items: center;
+  white-space: nowrap;
   gap: 7px;
   font-size: 12px;
   color: var(--text-secondary);
@@ -159,13 +178,13 @@ body {
 
 .status-dot.connected {
   background: var(--color-success);
-  box-shadow: 0 0 8px rgba(95, 211, 170, 0.5);
+  box-shadow: 0 0 0 3px rgba(15, 157, 110, 0.18);
   animation: pulse 2s ease-in-out infinite;
 }
 
 .status-dot.recording {
   background: var(--color-danger);
-  box-shadow: 0 0 8px rgba(255, 92, 110, 0.5);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.18);
   animation: pulse 1s ease-in-out infinite;
 }
 
@@ -238,6 +257,8 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 8px 20px;
   gap: 6px;
   background: var(--bg-surface);
@@ -257,9 +278,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
+  padding: 7px 16px;
   border: none;
-  border-radius: var(--radius-sm);
+  /* Pill-shaped, which is what this suite uses for anything clickable. */
+  border-radius: var(--radius-xl);
   font-family: 'Inter', sans-serif;
   font-size: 12.5px;
   font-weight: 500;
@@ -297,8 +319,8 @@ body {
   border: 1px solid var(--border-medium);
 }
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.16);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .btn-danger {
@@ -310,12 +332,12 @@ body {
 }
 
 .btn-accent {
-  background: rgba(124, 92, 252, 0.15);
+  background: var(--accent-soft);
   color: var(--accent-hover);
-  border: 1px solid rgba(124, 92, 252, 0.25);
+  border: 1px solid var(--border-medium);
 }
 .btn-accent:hover:not(:disabled) {
-  background: rgba(124, 92, 252, 0.25);
+  background: var(--border-medium);
 }
 
 .btn-ghost {
@@ -338,6 +360,9 @@ body {
   display: flex;
   min-height: 0;
   overflow: hidden;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-base);
 }
 
 .split-pane {
@@ -352,16 +377,20 @@ body {
   min-width: 200px;
   overflow: hidden;
   min-height: 0;
+  /* A card on the page, which is how the depth is carried now that there is
+     no dark ground to cut regions out of. */
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .pane-left {
   flex: 0 0 58%;
-  border-right: 1px solid var(--border-subtle);
 }
 
 .pane-right {
   flex: 1;
-  background: var(--bg-surface);
 }
 
 .resize-handle {
@@ -381,42 +410,44 @@ body {
 /* ─── Tabs ──────────────────────────────────────────────────── */
 .tab-bar {
   display: flex;
-  padding: 0 16px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  gap: 4px;
+  padding: 8px 12px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
 .tab-btn {
-  padding: 10px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
   background: none;
   border: none;
+  border-radius: var(--radius-xl);
   color: var(--text-secondary);
   font-family: 'Inter', sans-serif;
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  position: relative;
-  transition: color var(--duration-fast);
+  white-space: nowrap;
+  transition: background var(--duration-fast), color var(--duration-fast);
 }
 
 .tab-btn:hover {
+  background: var(--accent-soft);
   color: var(--text-primary);
 }
 
+/* Selected is a filled pill, not an underline: it is what the rest of the
+   suite does, and it survives a tab row that wraps. */
 .tab-btn.active {
-  color: var(--text-primary);
-}
-
-.tab-btn.active::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 12px;
-  right: 12px;
-  height: 2px;
-  background: var(--accent-gradient);
-  border-radius: 2px 2px 0 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .tab-content {
@@ -474,15 +505,15 @@ body {
 }
 
 .data-table tbody tr:hover {
-  background: rgba(255,255,255,0.03);
+  background: var(--bg-elevated);
 }
 
 .data-table tbody tr.selected {
-  background: rgba(124, 92, 252, 0.1);
+  background: var(--accent-soft);
 }
 
 .data-table tbody tr.selected td {
-  border-bottom-color: rgba(124, 92, 252, 0.15);
+  border-bottom-color: var(--accent-soft);
 }
 
 .col-num { width: 40px; text-align: center; }
@@ -616,7 +647,7 @@ body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(27, 23, 51, 0.35);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
@@ -718,12 +749,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.1);
+  background: var(--border-medium);
   border-radius: 99px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.18);
+  background: var(--accent);
 }
 
 /* ─── Loading Spinner ───────────────────────────────────────── */
@@ -731,7 +762,7 @@ body {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255,255,255,0.15);
+  border: 2px solid var(--border-medium);
   border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
@@ -761,8 +792,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 20px;
-  background: rgba(95, 211, 170, 0.06);
-  border-bottom: 1px solid rgba(95, 211, 170, 0.12);
+  background: #ecfdf5;
+  border-bottom: 1px solid #a7f3d0;
 }
 
 .connect-status {
@@ -1033,7 +1064,7 @@ body {
 .screen-video {
   width: 100%;
   max-height: 360px;
-  background: #000;
+  background: var(--bg-elevated);
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-sm);
 }
@@ -1097,7 +1128,7 @@ body {
   margin-top: 8px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(124, 92, 252, 0.15);
+  background: var(--accent-soft);
   border: 1px solid var(--accent);
   color: var(--accent-hover);
   font-size: 12px;
@@ -1149,7 +1180,7 @@ button.drop-gap-shot {
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: rgba(124, 92, 252, 0.10);
+  background: var(--accent-soft);
   border: 1px solid var(--accent);
   font-size: 12px;
   line-height: 1.5;
