@@ -52,6 +52,8 @@ export const api = {
 
   tests:        (base, app, token) =>
     request(base, 'GET', `/v1/tests${app ? `?app=${encodeURIComponent(app)}` : ''}`, undefined, token),
+  testDetail:   (base, testId, token) =>
+    request(base, 'GET', `/v1/tests/${testId}`, undefined, token),
   runTest:      (base, testId, timeout, token) =>
     request(base, 'POST', '/v1/tests/run', { test: testId, timeout: timeout || 0 }, token),
 };
@@ -75,11 +77,16 @@ export function mediaUrl(base, sid, name, token) {
  * and handed to the <img> as a blob, it works on a tunnel, on a LAN address and
  * on loopback alike.
  */
-export async function fetchMedia(base, sid, name, token, thumb = false) {
+export async function fetchMedia(base, sid, name, token, thumb = false,
+                                 testId = null) {
+  // A picture belongs either to the session that is being recorded or to a
+  // saved test's own folder. Same fetch, different owner.
+  const root = testId
+    ? `${base}/v1/tests/${testId}/media`
+    : `${base}/v1/sessions/${sid}/media`;
   const one = async (which) => {
-    const response = await fetch(
-      `${base}/v1/sessions/${sid}/media/${encodeURIComponent(which)}`,
-      { headers: headers(token) });
+    const response = await fetch(`${root}/${encodeURIComponent(which)}`,
+                                 { headers: headers(token) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return URL.createObjectURL(await response.blob());
   };

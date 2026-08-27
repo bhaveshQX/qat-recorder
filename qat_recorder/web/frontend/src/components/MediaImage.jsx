@@ -10,7 +10,7 @@ import { fetchMedia } from '../api';
  * icon with no explanation. This says what went wrong instead.
  */
 export default function MediaImage({ base, sid, name, token, alt, className,
-                                     thumb = false }) {
+                                     thumb = false, testId = null }) {
   const [url, setUrl] = useState('');
   const [failed, setFailed] = useState('');
 
@@ -19,7 +19,7 @@ export default function MediaImage({ base, sid, name, token, alt, className,
     let live = true;
     let made = '';
     setFailed('');
-    fetchMedia(base, sid, name, token, thumb)
+    fetchMedia(base, sid, name, token, thumb, testId)
       .then(objectUrl => {
         if (!live) { URL.revokeObjectURL(objectUrl); return; }
         made = objectUrl;
@@ -30,7 +30,7 @@ export default function MediaImage({ base, sid, name, token, alt, className,
       live = false;
       if (made) URL.revokeObjectURL(made);   // the blob is ours to release
     };
-  }, [base, sid, name, token, thumb]);
+  }, [base, sid, name, token, thumb, testId]);
 
   if (failed) {
     // A picture that has not been taken yet is not a failure worth shouting

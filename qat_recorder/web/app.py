@@ -259,6 +259,26 @@ def create_app(agent, token: str = "") -> FastAPI:
     async def tests(app_name: str = Query("", alias="app"), _auth=Authenticated):
         return await _offload(agent.tests, app_name)
 
+    @app.get("/v1/tests/{test_id:path}/media/{name}")
+    async def test_media(test_id: str, name: str, request: Request,
+                         token: str = Query("")):
+        """One still belonging to a saved test."""
+        if app.state.token:
+            presented = parse_bearer(request.headers.get("Authorization") or "")
+            if not (token_matches(app.state.token, presented)
+                    or token_matches(app.state.token, token)):
+                raise HTTPException(status_code=401, detail="unauthorised")
+        try:
+            path = agent.test_media(test_id, name)
+        except AgentError as error:
+            raise HTTPException(status_code=error.status or 404,
+                                detail={"error": str(error)})
+        return FileResponse(str(path))
+
+    @app.get("/v1/tests/{test_id:path}")
+    async def test_detail(test_id: str, _auth=Authenticated):
+        return await _offload(agent.test_detail, test_id)
+
     @app.post("/v1/tests/run")
     async def run_test(body: RunTestRequest, _auth=Authenticated):
         loop = asyncio.get_event_loop()

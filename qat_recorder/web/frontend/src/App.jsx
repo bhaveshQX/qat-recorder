@@ -80,6 +80,11 @@ export default function App() {
   // middle: the browser's list was append-only and diverged for good.
   const [steps, setSteps] = useState([]);
   const [media, setMedia] = useState({ stills: [], video: '', gap_shots: {} });
+  // A saved test, once one is selected. The script, JSON, screens and dropped
+  // panes were fed from the live session and nothing else, so opening a stored
+  // test showed whatever had last been recorded -- which is worse than showing
+  // nothing, because it looks like the test.
+  const [openTest, setOpenTest] = useState(null);
   
   // ── modals ───────────────────────────────────────────
   const [showCodeModal, setShowCodeModal] = useState(false);
@@ -110,12 +115,46 @@ export default function App() {
 
   // ── helpers ────────────────────────────────────────
   const isStep = (a) => a.kind !== 'launch';
-  // Gaps nobody has filled yet. The badge on the Live Script tab is the only
-  // thing that tells the operator to go and look, since they spent the session
-  // watching the application rather than this panel.
-  const openGaps = gaps.filter(gap => !gap.repaired).length;
   const updateStatus = useCallback((msg) => setStatusMsg(msg), []);
+
+  // Which recording the right-hand panes are looking at: the one being made, or
+  // the saved test the operator has selected. Everything below reads from this
+  // rather than from the session directly, so the two cannot disagree.
+  const showingTest = activeTab === 'library' && !!openTest;
+  const view = showingTest
+    ? {
+        script: openTest.script || '',
+        steps: openTest.steps || [],
+        gaps: openTest.gaps || [],
+        dropped: openTest.dropped
+          ? openTest.dropped.split('\n').filter(Boolean) : [],
+        recording: openTest.recording || {},
+        stills: openTest.stills || [],
+        // A saved test's pictures live in its own folder, under its own id.
+        mediaBase: `${agentUrl}/v1/tests/${openTest.id}`,
+      }
+    : {
+        script: isScriptEdited ? customScript : scriptText,
+        steps,
+        gaps,
+        dropped: droppedEvents,
+        recording: null,
+        stills: media.stills || [],
+        mediaBase: `${agentUrl}/v1/sessions/${sessionId}`,
+      };
+
+  // Gaps nobody has filled yet, in whatever is being shown. The badge on the
+  // Live Script tab is the only thing that tells the operator to go and look,
+  // since they spent the session watching the application rather than the
+  // panel -- and it belongs to the thing on screen, not always to the session.
+  const viewGaps = view.gaps.filter(gap => !gap.repaired).length;
   const shotFor = (index) => {
+    if (showingTest) {
+      const name = openTest.gaps?.[index]?.shot;
+      return name
+        ? { base: agentUrl, sid: null, name, token, testId: openTest.id }
+        : null;
+    }
     const name = media.gap_shots?.[String(index)];
     return name ? { base: agentUrl, sid: sessionId, name, token } : null;
   };
@@ -125,8 +164,11 @@ export default function App() {
   // number assumed the browser's list and the recording's list were the same
   // list; a single repair made them different for the rest of the session.
   const shotForStep = (row) => {
-    const name = steps[row]?.shot;
-    return name ? { base: agentUrl, sid: sessionId, name, token } : null;
+    const name = (showingTest ? openTest.steps : steps)[row]?.shot;
+    if (!name) return null;
+    return showingTest
+      ? { base: agentUrl, sid: null, name, token, testId: openTest.id }
+      : { base: agentUrl, sid: sessionId, name, token };
   };
 
   // ── connect to agent ───────────────────────────────
@@ -632,10 +674,14 @@ export default function App() {
     setDetails(lines.join('\n'));
   };
 
-  const selectTest = (idx) => {
+  const selectTest = async (idx) => {
     setSelectedTest(idx);
     const c = tests[idx];
-    if (!c) return;
+    if (!c) { setOpenTest(null); return; }
+    // Its own script, its own recording, its own screens.
+    api.testDetail(agentUrl, c.id, token)
+      .then(detail => setOpenTest({ ...detail, id: c.id }))
+      .catch(e => updateStatus(`Could not open ${c.name}: ${e.message}`));
     const result = testResults[c.id];
     const lines = [
       `test        ${c.name}`,
@@ -747,7 +793,7 @@ export default function App() {
 
                 <div className={`tab-content ${activeTab === 'session' ? 'active' : ''}`}>
                   <ActionTable
-                    actions={steps.length ? steps : actions}
+                    actions={view.steps.length ? view.steps : actions}
                     selectedRow={selectedRow}
                     onSelect={selectAction}
                     shotForStep={shotForStep}
@@ -780,7 +826,7 @@ export default function App() {
                   <button className={`tab-btn ${rightTab === 'script' ? 'active' : ''}`}
                           onClick={() => setRightTab('script')}>
                     Live Script
-                    {openGaps > 0 && <span className="badge badge-muted" style={{marginLeft: 6, color: 'var(--color-unresolved)'}}>{openGaps}</span>}
+                    {viewGaps > 0 && <span className="badge badge-muted" style={{marginLeft: 6, color: 'var(--color-unresolved)'}}>{viewGaps}</span>}
                   </button>
                   <button className={`tab-btn ${rightTab === 'json' ? 'active' : ''}`}
                           onClick={() => setRightTab('json')}>
@@ -789,11 +835,11 @@ export default function App() {
                   <button className={`tab-btn ${rightTab === 'screen' ? 'active' : ''}`}
                           onClick={() => setRightTab('screen')}>
                     Screen
-                    {media.stills?.length > 0 && <span className="badge badge-muted" style={{marginLeft: 6}}>{media.stills.length}</span>}
+                    {view.stills?.length > 0 && <span className="badge badge-muted" style={{marginLeft: 6}}>{view.stills.length}</span>}
                   </button>
                   <button className={`tab-btn ${rightTab === 'dropped' ? 'active' : ''}`}
                           onClick={() => setRightTab('dropped')}>
-                    Dropped Events {droppedEvents.length > 0 && <span className="badge badge-muted" style={{marginLeft: 6, color: 'var(--color-unresolved)'}}>{droppedEvents.length}</span>}
+                    Dropped Events {view.dropped.length > 0 && <span className="badge badge-muted" style={{marginLeft: 6, color: 'var(--color-unresolved)'}}>{view.dropped.length}</span>}
                   </button>
                 </div>
 
@@ -805,23 +851,24 @@ export default function App() {
 
                 <div className={`tab-content ${rightTab === 'json' ? 'active' : ''}`} style={{ display: rightTab === 'json' ? 'flex' : 'none', flex: 1, overflow: 'auto', padding: 16 }}>
                    <pre style={{ margin: 0, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', color: 'var(--text-secondary)' }}>
-                     {JSON.stringify({ actions }, null, 2)}
+                     {JSON.stringify(showingTest ? view.recording
+                                                : { actions }, null, 2)}
                    </pre>
                 </div>
 
                 <div className={`tab-content ${rightTab === 'script' ? 'active' : ''}`} style={{ display: rightTab === 'script' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
                   <LiveScriptEditor
-                    script={isScriptEdited ? customScript : scriptText}
-                    readOnly={recording}
+                    script={view.script}
+                    readOnly={recording || showingTest}
                     busy={busy}
-                    canPoint={state === S.RECORDING || state === S.PICKING}
+                    canPoint={!showingTest && (state === S.RECORDING || state === S.PICKING)}
                     picking={state === S.PICKING}
                     onPoint={pointAtGap}
                     onPickNow={pickNow}
                     onCancelPoint={cancelRepair}
                     arming={summary.arming ?? null}
                     onOpenShot={setLightbox}
-                    llmReady={!!(llm.enabled && llm.apiKey)}
+                    llmReady={!showingTest && !!(llm.enabled && llm.apiKey)}
                     onAskModel={askModel}
                     proposal={proposal}
                     onAcceptProposal={acceptProposal}
@@ -874,16 +921,17 @@ export default function App() {
 
                   <div>
                     <div className="screen-heading">
-                      Stills ({media.stills?.length || 0}) — one at every gap, plus any you took
+                      Stills ({view.stills?.length || 0}) — one at every gap, plus any you took
                     </div>
                     {media.still_note && (
                       <div className="screen-note">{media.still_note}</div>
                     )}
-                    {media.stills?.length ? (
+                    {view.stills?.length ? (
                       <div className="screen-strip">
-                        {media.stills.map(name => (
+                        {view.stills.map(name => (
                           <div key={name} title={name}>
                             <MediaImage base={agentUrl} sid={sessionId}
+                                        testId={showingTest ? openTest.id : null}
                                         name={name} token={token} alt={name} thumb />
                           </div>
                         ))}
@@ -895,7 +943,7 @@ export default function App() {
                 </div>
 
                 <div className={`tab-content ${rightTab === 'dropped' ? 'active' : ''}`} style={{ display: rightTab === 'dropped' ? 'flex' : 'none', flex: 1, padding: 16, overflow: 'auto', flexDirection: 'column', gap: '8px' }}>
-                  {droppedEvents.length === 0 ? (
+                  {view.dropped.length === 0 ? (
                     <div className="empty-state" style={{flex: 'unset', marginTop: 40}}>
                       <svg width="48" height="48" viewBox="0 0 48 48" fill="none" opacity="0.3">
                         <circle cx="24" cy="24" r="20" stroke="currentColor" strokeWidth="2"/>
@@ -904,7 +952,7 @@ export default function App() {
                       <p>No dropped events. Everything was recorded successfully!</p>
                     </div>
                   ) : (
-                    droppedEvents.map((evt, i) => (
+                    view.dropped.map((evt, i) => (
                       <div key={i} style={{ background: 'var(--bg-elevated)', padding: '12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-medium)' }}>
                         <div style={{ color: 'var(--color-unresolved)', marginBottom: 6, fontWeight: 'bold', fontSize: 11, textTransform: 'uppercase' }}>Dropped Event {i+1}</div>
                         <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', whiteSpace: 'pre-wrap', color: 'var(--text-secondary)' }}>{evt}</div>

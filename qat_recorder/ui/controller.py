@@ -801,6 +801,17 @@ class RecorderController:
             summary=self.summary())
         self.saved_to = str(case.directory)
 
+        # The pictures go with it. A kept test used to be text only, so opening
+        # it later showed a script, a recording and an empty Screen tab -- the
+        # stills stayed in the session folder, which is named after a session id
+        # nobody remembers and is not what anybody goes looking in.
+        if self.media is not None and self.media.shots_dir.is_dir():
+            try:
+                shutil.copytree(self.media.shots_dir, case.directory / "shots",
+                                dirs_exist_ok=True)
+            except OSError as error:                          # noqa: BLE001
+                self._report(f"could not keep the screenshots: {error}")
+
         if verify:
             from qat_recorder.replay import run_pytest       # noqa: PLC0415
             library.record_verdict(case, run_pytest(case.directory))

@@ -513,6 +513,94 @@ class Agent:
                 "apps": library.apps(),
                 "root": str(library.root)}
 
+    def test_detail(self, test_id: str) -> dict:
+        """Everything a saved test has, in the same shape as a live session.
+
+        The panel shows a script, a recording, the screens and what was dropped.
+        Those panes were fed from the session and nothing else, so selecting a
+        saved test left them showing whatever had last been recorded -- which is
+        worse than showing nothing, because it looks like the test.
+        """
+        from qat_recorder.ir import ActionKind, Recording     # noqa: PLC0415
+        from qat_recorder.library import TestLibrary          # noqa: PLC0415
+
+        try:
+            case = TestLibrary().get(test_id)
+        except LookupError as error:
+            raise AgentError(str(error), 404)
+
+        directory = case.directory
+
+        def _read(name: str) -> str:
+            try:
+                return (directory / name).read_text(encoding="utf-8")
+            except OSError:
+                return ""
+
+        detail = {
+            "test": case.to_dict(),
+            "script": _read("test_recorded.py"),
+            "feature": _read("recorded.feature"),
+            "objects": _read("objects.json"),
+            "dropped": _read("unresolved.txt"),
+            "steps": [],
+            "gaps": [],
+            "stills": [],
+            "recording": {},
+        }
+
+        shots = directory / "shots"
+        if shots.is_dir():
+            detail["stills"] = sorted(
+                path.name for path in shots.glob("*.png")
+                if not path.name.endswith(".thumb.png"))
+        taken = set(detail["stills"])
+
+        raw = _read("recording.json")
+        if raw:
+            try:
+                recording = Recording.loads(raw)
+            except Exception:                                # noqa: BLE001
+                return detail
+            detail["recording"] = recording.to_dict()
+            for index, action in enumerate(recording.actions):
+                if action.kind is ActionKind.LAUNCH:
+                    continue
+                target = action.target
+                detail["steps"].append({
+                    "index": index,
+                    "kind": action.kind.value,
+                    "note": action.note,
+                    "shot": action.shot if action.shot in taken else "",
+                    "target": {
+                        "label": target.label if target else "",
+                        "robustness": target.robustness.value if target else "",
+                        "definition": dict(target.definition) if target else {},
+                    } if target else None,
+                })
+            detail["gaps"] = [dict(drop.to_dict(), index=index)
+                              for index, drop in enumerate(recording.drops)]
+        return detail
+
+    def test_media(self, test_id: str, name: str):
+        """One still from a saved test's own folder. Never escapes it."""
+        from qat_recorder.library import TestLibrary          # noqa: PLC0415
+
+        try:
+            case = TestLibrary().get(test_id)
+        except LookupError as error:
+            raise AgentError(str(error), 404)
+
+        shots = (case.directory / "shots")
+        try:
+            resolved = (shots / name).resolve()
+            resolved.relative_to(shots.resolve())
+        except (OSError, ValueError):
+            raise AgentError(f"no media called {name!r} in this test", 404)
+        if not resolved.is_file():
+            raise AgentError(f"no media called {name!r} in this test", 404)
+        return resolved
+
     def run_test(self, test_id: str, timeout: float = 0.0) -> dict:
         """Run one saved test. Deliberately independent of any session.
 

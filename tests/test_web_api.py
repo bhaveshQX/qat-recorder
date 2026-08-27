@@ -567,3 +567,64 @@ def test_nothing_regenerates_over_a_saved_script(panel):
         again = panel.client.post(f"/v1/sessions/{panel.session}/artifacts",
                                   headers=AUTH, json={}).json()
         assert again["files"]["test_recorded.py"] == mine
+
+
+# --- a saved test, read back whole -----------------------------------------
+
+def _keep_one(panel, tmp_path, name="kept"):
+    from qat_recorder.media import SessionMedia
+    from tests.test_media import FakeQat as ShootingQat
+
+    controller = panel.agent.session.controller
+    controller.media = SessionMedia(tmp_path / "session", record_video=False,
+                                    qat_module=ShootingQat())
+    _with_a_gap(panel)
+    controller.media.settle()
+    panel.command("stop")
+    return panel.client.post(f"/v1/sessions/{panel.session}/keep", headers=AUTH,
+                             json={"name": name, "verify": False}).json()["test"]
+
+
+def test_a_kept_test_can_be_read_back_whole(panel, tmp_path):
+    """Selecting a saved test used to leave the script, JSON, screens and
+    dropped panes showing whatever had last been recorded -- which is worse than
+    showing nothing, because it looks like the test."""
+    case = _keep_one(panel, tmp_path)
+    detail = panel.client.get(f"/v1/tests/{case['id']}", headers=AUTH).json()
+
+    assert detail["script"].startswith('"""'), "no script came back"
+    assert detail["recording"]["app"], "no recording came back"
+    assert detail["steps"], "no steps came back"
+    assert detail["gaps"], "the gap it was recorded with is missing"
+    assert detail["dropped"], "nothing said what was dropped"
+
+
+def test_a_kept_test_takes_its_screenshots_with_it(panel, tmp_path):
+    """A kept test used to be text only: the stills stayed in a session folder
+    named after an id nobody remembers."""
+    case = _keep_one(panel, tmp_path, name="withshots")
+    detail = panel.client.get(f"/v1/tests/{case['id']}", headers=AUTH).json()
+
+    assert detail["stills"], "the pictures were left behind"
+    shot = panel.client.get(
+        f"/v1/tests/{case['id']}/media/{detail['stills'][0]}", headers=AUTH)
+    assert shot.status_code == 200
+    assert shot.content.startswith(b"\x89PNG")
+
+
+def test_a_kept_tests_steps_point_at_its_own_pictures(panel, tmp_path):
+    case = _keep_one(panel, tmp_path, name="mapped")
+    detail = panel.client.get(f"/v1/tests/{case['id']}", headers=AUTH).json()
+
+    named = [step for step in detail["steps"] if step["shot"]]
+    assert named, "no step in the saved test carried a picture"
+    for step in named:
+        assert step["shot"] in detail["stills"], (
+            "a step names a picture the saved test does not have")
+
+
+def test_media_from_another_test_is_not_served(panel, tmp_path):
+    case = _keep_one(panel, tmp_path, name="fenced")
+    answer = panel.client.get(
+        f"/v1/tests/{case['id']}/media/..%2F..%2Fmeta.json", headers=AUTH)
+    assert answer.status_code == 404
