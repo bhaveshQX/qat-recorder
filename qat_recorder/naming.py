@@ -364,3 +364,75 @@ def summarise(targets: Sequence[Target]) -> dict:
     for target in targets:
         counts[target.robustness.value] += 1
     return counts
+
+
+#: A class name so generic that scoping by it says nothing.
+_ANONYMOUS_CONTAINERS = frozenset({"QWidget", "QFrame", "QObject"})
+
+
+def reported_target(locator) -> Optional[Target]:
+    """What the application said this object was, when nothing can be asked now.
+
+    The resolver's whole method is to propose a definition and check it against
+    the running application. That is right, and it has one blind spot: an object
+    that is *gone* by the time the check runs. Clicking OK dismisses the dialog
+    the OK button lives in, so the press is reported, the dialog tears itself
+    down, and the lookup a moment later finds nothing. Whether it finds anything
+    is a matter of milliseconds, which is exactly why the same button recorded
+    sometimes and disappeared other times.
+
+    Nothing about that means the object was not there. The native filter read
+    its class, its text and its whole ancestor chain *inside the application*,
+    at the instant the person clicked it -- that identity is not a guess, it is
+    a first-hand report. What it has never been is *checked*, and it says so:
+    Robustness.REPORTED, a warning that travels into the generated script, and a
+    replay a few seconds later that settles it either way.
+
+    Returned only when the report actually distinguishes something. A bare
+    `{"type": "QCheckBox"}` names every check box in the dialog, and guessing
+    there is the failure this project exists to avoid -- so that returns None
+    and stays a gap.
+    """
+    class_name = (getattr(locator, "cls", "") or "").strip()
+    object_name = (getattr(locator, "object_name", "") or "").strip()
+    text = (getattr(locator, "text", "") or "").strip()
+    if not class_name or (not object_name and not text):
+        return None
+
+    container = None
+    for step_class, step_name in (getattr(locator, "path", ()) or ()):
+        if step_name:
+            container = {"objectName": step_name}
+            break
+        if step_class and step_class not in _ANONYMOUS_CONTAINERS:
+            container = {"type": step_class}
+            break
+
+    candidates = []
+    if object_name:
+        candidates.append({"objectName": object_name, "type": class_name})
+        candidates.append({"objectName": object_name})
+    if text:
+        # Scoped first: "the OK button" is in every dialog the application has,
+        # and the one that matters is the one in the dialog that was open.
+        if container:
+            candidates.append({"type": class_name, "text": text,
+                               "container": dict(container)})
+        candidates.append({"type": class_name, "text": text})
+    if object_name and container:
+        candidates.append({"objectName": object_name,
+                           "container": dict(container)})
+
+    where = ""
+    if container:
+        where = container.get("objectName") or container.get("type") or ""
+    return Target(
+        definition=candidates[0],
+        alternatives=tuple(candidates[1:]),
+        strategy="reported by the application as the event happened",
+        robustness=Robustness.REPORTED,
+        label=(object_name or text) + (f" in {where}" if where else ""),
+        warnings=(
+            "the object had gone by the time it could be checked -- this is "
+            "what the application said it was at the moment it was used, not a "
+            "definition that was verified. The replay is what proves it.",))

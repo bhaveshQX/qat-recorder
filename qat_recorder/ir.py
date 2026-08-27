@@ -30,6 +30,13 @@ class Robustness(str, Enum):
     MODERATE = "moderate"    # structural: type + container/parent chain
     WEAK = "weak"            # depends on visible text; breaks under translation
     FRAGILE = "fragile"      # positional index; breaks if siblings are reordered
+    # What the application itself said the object was, in-process, at the
+    # instant it was used -- and which could not afterwards be checked, because
+    # by then the object had gone. An OK button dismisses its own dialog: the
+    # click is real, the identity is real, and asking Qat about it a moment
+    # later is a race the recorder loses about half the time. That race is what
+    # made the same button record sometimes and vanish other times.
+    REPORTED = "reported"
     UNRESOLVED = "unresolved"  # no unique definition could be produced
 
     @property
@@ -42,7 +49,8 @@ _ROBUSTNESS_ORDER = {
     Robustness.MODERATE: 1,
     Robustness.WEAK: 2,
     Robustness.FRAGILE: 3,
-    Robustness.UNRESOLVED: 4,
+    Robustness.REPORTED: 4,
+    Robustness.UNRESOLVED: 5,
 }
 
 

@@ -135,6 +135,7 @@ const GRADE_COLOUR = {
   moderate: 'var(--color-moderate)',
   weak: 'var(--color-weak)',
   fragile: 'var(--color-fragile)',
+  reported: 'var(--accent)',
 };
 
 function DroppedEventWidget({ data, onApply, onPoint, onPickNow, onCancelPoint,

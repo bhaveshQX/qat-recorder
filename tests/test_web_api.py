@@ -30,7 +30,12 @@ from tests.test_ui_controller import FakeQat, FakeReceiver      # noqa: E402
 
 TOKEN = "test-token-not-a-real-secret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
-NOWHERE = ("QNotARealClass", "nothingLikeThis")
+#: A control the application cannot be made to name at all: no objectName,
+#: no text, nothing that distinguishes it from any other of its class. That
+#: is what makes it a gap. An object the filter *could* name is recorded from
+#: what it reported, even when it has since been destroyed -- see
+#: naming.reported_target.
+NOWHERE = ("QNotARealClass", "")
 
 
 class Panel:
@@ -311,7 +316,7 @@ def test_only_the_gap_being_filled_says_it_is_waiting(panel):
     """`arming` names the gap. A global picking flag put every gap on screen
     into Waiting at once."""
     _with_a_gap(panel)
-    panel.push(*click_pair(900, "QNotEither", "alsoNothing"))
+    panel.push(*click_pair(900, "QNotEither", ""))
     assert panel.preview()["open_gaps"] == 2
 
     panel.command("arm_repair", index=1)

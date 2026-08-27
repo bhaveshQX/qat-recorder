@@ -631,6 +631,12 @@ class RecorderController:
     def _pick(self, event: RawEvent) -> None:
         self._drop_next_release = True
         resolved = self.session.resolve_locator(event.target)
+        # Pointing is a question about what is on screen *now*. A target built
+        # from what the application reported has no live object behind it, and a
+        # checkpoint has to read a property off one -- so for picking, that is
+        # still a failure to identify.
+        if resolved is not None and resolved[0] is None:
+            resolved = None
         repairing, self._repairing = self._repairing, None
         self._set_state(State.PAUSED if repairing is not None
                         else State.RECORDING)

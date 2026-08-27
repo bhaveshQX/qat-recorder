@@ -536,6 +536,10 @@ body {
 .robustness-moderate   { color: var(--color-moderate);   background: rgba(124,192,240,0.12); }
 .robustness-weak       { color: var(--color-weak);       background: rgba(240,185,92,0.12); }
 .robustness-fragile    { color: var(--color-fragile);    background: rgba(255,139,94,0.12); }
+/* What the application said it was, never checked. Its own colour, because it
+   is neither a graded locator nor a failure: it is a first-hand report waiting
+   for a replay to confirm it. */
+.robustness-reported   { color: #7c3aed;                   background: var(--accent-soft); }
 .robustness-unresolved { color: var(--color-unresolved); background: rgba(255,123,123,0.12); }
 
 .verdict-passed { color: var(--color-strong); }

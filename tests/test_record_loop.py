@@ -43,8 +43,19 @@ def test_a_click_in_a_dialog_survives_if_it_is_resolved_while_open():
     assert capture.unresolved == 0
 
 
-def test_the_same_click_is_lost_if_it_is_resolved_afterwards():
-    """The old behaviour, kept as a test so the reason is not forgotten."""
+def test_a_click_on_a_dialog_that_has_closed_is_kept_from_what_was_reported():
+    """This used to be the loss, and it was flaky, which was worse.
+
+    Clicking OK dismisses the dialog the OK button lives in. The press is
+    reported; the dialog tears itself down; the lookup a moment later finds
+    nothing. Whether it found anything was a matter of milliseconds -- which is
+    why the same button recorded sometimes and vanished other times.
+
+    Nothing about that means the object was not there. The filter read its
+    class, its text and its ancestry inside the application at the instant it
+    was clicked. That is kept now, graded `reported` so the script says it was
+    never checked, and the replay settles it.
+    """
     backend, _, close = _with_dialog()
     capture = CaptureSession(backend, app_name="sample")
 
@@ -52,9 +63,17 @@ def test_the_same_click_is_lost_if_it_is_resolved_afterwards():
     capture.feed_all(click_pair(1000, "QPushButton", text="&OK"))
     recording = capture.finish()
 
-    assert [a.kind for a in recording.actions] == [ActionKind.LAUNCH]
-    assert capture.unresolved == 2
-    assert "could not be found" in capture.failures[0]
+    assert [a.kind for a in recording.actions] == [
+        ActionKind.LAUNCH, ActionKind.CLICK]
+    target = recording.actions[-1].target
+    assert target.robustness.value == "reported"
+    assert target.definition["text"] == "&OK"
+    assert any("had gone by the time it could be checked" in warning
+               for warning in target.warnings)
+    # And nothing was lost, which is the point: this used to be two unresolved
+    # events and a step that was simply missing.
+    assert capture.unresolved == 0
+    assert recording.drops == []
 
 
 def test_the_drop_report_collapses_repeats_and_explains_itself():

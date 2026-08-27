@@ -41,7 +41,8 @@ from qat_recorder.items import (
     selection_property,
 )
 from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
-from qat_recorder.naming import NameResolver, is_editable, is_secret_field
+from qat_recorder.naming import (
+    NameResolver, is_editable, is_secret_field, reported_target)
 
 # Qt::Key values for keys that do not produce text.
 KEY_NAMES = {
@@ -1074,6 +1075,10 @@ class CaptureSession:
         ends, which is when it means something.
         """
         prop = prop or value_property(event.target.cls)
+        if node is None:
+            # Reported rather than found: there is nothing to read a value from,
+            # and a click is not a value change anyway.
+            return False
         if not prop:
             return False
         if (self._value_target is not None
@@ -1311,6 +1316,37 @@ class CaptureSession:
 
         node = find_by_locator(self.backend, locator)
         if node is None:
+            # Gone by the time we asked -- which for anything that dismisses
+            # what contains it is a race, not an absence. The filter read this
+            # object's class, text and ancestry inside the application at the
+            # instant it was used; that first-hand report is worth more than
+            # dropping the step, provided it distinguishes something.
+            reported = reported_target(locator)
+            if reported is not None:
+                # Which of the two failures is this? They look identical from
+                # here and they are not remotely the same thing.
+                #
+                #   nothing matches  -> the object is gone. The report is the
+                #                       only account of it and it is first-hand.
+                #   one matches      -> it is there after all; resolve it
+                #                       properly and grade it properly.
+                #   several match    -> ambiguous. Two identical Apply buttons
+                #                       are not distinguished by calling one of
+                #                       them "the Apply button", and guessing
+                #                       here is what produced scripts that died
+                #                       on "Multiple objects found".
+                try:
+                    matches = list(self.backend.find_all(reported.definition))
+                except Exception:                            # noqa: BLE001
+                    matches = []
+                if len(matches) == 1:
+                    found = self.resolver.resolve(matches[0])
+                    if found.robustness is not Robustness.UNRESOLVED:
+                        return (matches[0], found), "", note
+                elif not matches:
+                    return (None, reported), "", (
+                        note or "the object had gone before it could be "
+                        "checked; this is what the application reported it as")
             return None, NOT_FINDABLE, ""
         target = self.resolver.resolve(node)
         if target.robustness is Robustness.UNRESOLVED:

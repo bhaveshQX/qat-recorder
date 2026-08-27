@@ -25,7 +25,12 @@ from tests.test_capture import click_pair
 from tests.test_ui_controller import controller          # noqa: F401  (fixture)
 
 #: Nothing in the application answers to this, which is the point.
-NOWHERE = ("QNotARealClass", "nothingLikeThis")
+#: A control the application cannot be made to name at all: no objectName,
+#: no text, nothing that distinguishes it from any other of its class. That
+#: is what makes it a gap. An object the filter *could* name is recorded from
+#: what it reported, even when it has since been destroyed -- see
+#: naming.reported_target.
+NOWHERE = ("QNotARealClass", "")
 
 
 def _session_with_a_gap():
@@ -68,7 +73,7 @@ def test_a_gap_knows_where_it_happened():
     # LAUNCH and the first click had been recorded when the event was lost.
     assert drop.after == 2
     assert drop.kind == "mouse_press"
-    assert "nothingLikeThis" in drop.label
+    assert "" in drop.label
 
 
 def test_a_press_and_its_release_are_one_gap():
@@ -131,9 +136,9 @@ def test_a_gap_is_never_offered_as_a_locator():
     _, recording = _session_with_a_gap()
     script = emit_python(recording)
     assert "QNOTAREALCLASS" not in script
-    assert "nothingLikeThis" not in emit_object_map(recording)
-    assert "nothingLikeThis" not in emit_gherkin(recording)
-    assert "nothingLikeThis" not in emit_steps(recording)
+    assert "QNotARealClass" not in emit_object_map(recording)
+    assert "QNotARealClass" not in emit_gherkin(recording)
+    assert "QNotARealClass" not in emit_steps(recording)
 
 
 def test_a_gap_does_not_stop_the_recording_replaying():
@@ -544,9 +549,9 @@ def test_checking_a_gap_does_not_disturb_the_next_one():
     capture = CaptureSession(backend, app_name="sample")
     capture.feed_all(click_pair(100, *NOWHERE))
     first = capture.failures[0]
-    capture.feed_all(click_pair(400, "QNotEither", "alsoNothing"))
+    capture.feed_all(click_pair(400, "QNotEither", ""))
     assert capture.failures[0] == first
-    assert "alsoNothing" in capture.failures[-1]
+    assert "QNotEither" in capture.failures[-1]
 
 
 def test_two_clicks_on_the_same_control_are_two_gaps():
@@ -694,8 +699,11 @@ def test_a_closed_window_keeps_the_name_it_was_closed_under(controller):  # noqa
     from tests.test_capture import event
 
     controller.start()
+    # No objectName: the one case where a closing window really cannot be
+    # named. A dialog that *has* a name is recorded as a close now, from what
+    # the filter reported -- see test_record_loop.
     controller._test["receiver"].push(
-        event("close_window", 500, "TorrentCreatorDialog", "TorrentCreatorDialog",
+        event("close_window", 500, "TorrentCreatorDialog", "",
               path=(("QMainWindow", "MainWindow"),)))
     controller.poll()
 
@@ -703,14 +711,17 @@ def test_a_closed_window_keeps_the_name_it_was_closed_under(controller):  # noqa
     drop.evidence = controller.session.evidence_for(
         drop.locator_or_none(), drop.reason, drop.kind)
     assert drop.evidence["candidates"] == [], "the window really is gone"
+    # Its class is distinctive even though it has no objectName, and the
+    # window it was in does have one -- so it can still be closed by name.
     assert drop.evidence["closed_proposal"] == {
-        "type": "TorrentCreatorDialog", "objectName": "TorrentCreatorDialog",
+        "type": "TorrentCreatorDialog",
         "container": {"objectName": "MainWindow"}}
 
     controller.repair_closed(0)
     filled = controller.recording.actions[-1]
     assert filled.kind is ActionKind.CLOSE_WINDOW
-    assert filled.target.definition["objectName"] == "TorrentCreatorDialog"
+    assert filled.target.definition["type"] == "TorrentCreatorDialog"
+    assert filled.target.definition["container"] == {"objectName": "MainWindow"}
     # Graded honestly: it was never checked, and the script has to say so.
     assert filled.target.robustness.value == "unresolved"
     assert any("could not be checked" in warning
@@ -734,7 +745,7 @@ def test_the_marker_tells_the_panel_a_window_can_be_closed_by_name(controller): 
 
     controller.start()
     controller._test["receiver"].push(
-        event("close_window", 500, "TorrentCreatorDialog", "TorrentCreatorDialog"))
+        event("close_window", 500, "TorrentCreatorDialog", ""))
     controller.poll()
     drop = controller.recording.drops[0]
     drop.evidence = controller.session.evidence_for(
@@ -742,7 +753,7 @@ def test_the_marker_tells_the_panel_a_window_can_be_closed_by_name(controller): 
 
     line, = _marker_lines(emit_python(controller.recording))
     payload = json.loads(line.split(DROP_MARKER, 1)[1])
-    assert payload["closed_as"]["objectName"] == "TorrentCreatorDialog"
+    assert payload["kind"] == "close_window"
 
 
 # --- the text around a control ---------------------------------------------

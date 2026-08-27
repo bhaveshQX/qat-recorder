@@ -488,8 +488,15 @@ def test_locator_uses_index_for_identical_siblings(session):
 
 
 def test_unresolvable_events_are_counted_not_guessed(session):
+    """A control the application will not name is counted, never invented.
+
+    An object the filter *could* name is a different matter: see
+    test_record_loop, where a dialog's OK button is kept from what was reported
+    even though the dialog had already closed. The line between the two is
+    whether anything distinguishes it -- this one has nothing at all.
+    """
     capture, _, _ = session
-    capture.feed_all(click_pair(100, "QNotARealClass", "nothingLikeThis"))
+    capture.feed_all(click_pair(100, "QNotARealClass", ""))
     recording = capture.finish()
     assert capture.unresolved > 0
     assert [a.kind for a in recording.actions] == [ActionKind.LAUNCH]
