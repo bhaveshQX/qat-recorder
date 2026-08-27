@@ -495,8 +495,75 @@ def test_a_script_the_operator_typed_is_not_regenerated_over(panel):
                       json={"custom_script": mine}).raise_for_status()
 
     session = panel.agent.session
-    assert session.hand_edited is True
+    assert session.script == mine
     panel.client.post(f"/v1/sessions/{panel.session}/replay", headers=AUTH,
                       json={"timeout": 1.0})
     on_disk = (session.directory() / "test_recorded.py").read_text(encoding="utf-8")
     assert on_disk == mine, "the operator's own script was regenerated over"
+
+
+# --- one script, saved once ------------------------------------------------
+
+def test_the_saved_script_is_what_is_kept(panel):
+    """No second version. What the operator saved is what goes into the library,
+    verbatim -- not regenerated from the recording beside it."""
+    _with_a_gap(panel)
+    panel.command("stop")
+    mine = ("def test_recorded_session(application):\n"
+            "    pass  # written by the person who recorded this\n")
+    panel.client.post(f"/v1/sessions/{panel.session}/artifacts", headers=AUTH,
+                      json={"custom_script": mine}).raise_for_status()
+
+    kept = panel.client.post(f"/v1/sessions/{panel.session}/keep", headers=AUTH,
+                             json={"name": "mine", "verify": False}).json()
+    from pathlib import Path
+    stored = Path(kept["test"]["directory"]) / "test_recorded.py"
+    assert stored.read_text(encoding="utf-8") == mine
+
+
+def test_the_saved_script_is_what_is_replayed(panel):
+    _with_a_gap(panel)
+    panel.command("stop")
+    mine = "def test_recorded_session(application):\n    pass  # mine\n"
+    panel.client.post(f"/v1/sessions/{panel.session}/artifacts", headers=AUTH,
+                      json={"custom_script": mine}).raise_for_status()
+    panel.client.post(f"/v1/sessions/{panel.session}/replay", headers=AUTH,
+                      json={"timeout": 1.0})
+
+    on_disk = (panel.agent.session.directory() / "test_recorded.py").read_text(
+        encoding="utf-8")
+    assert on_disk == mine
+
+
+def test_the_recording_is_still_written_beside_it(panel):
+    """It is what a gap was filled against, and what a better emitter could make
+    a fresh script from one day. It just no longer overrules what was saved."""
+    _with_a_gap(panel)
+    panel.command("stop")
+    answer = panel.client.post(
+        f"/v1/sessions/{panel.session}/artifacts", headers=AUTH,
+        json={"custom_script": "def test_recorded_session(application):\n    pass\n"}
+    ).json()
+    assert answer["files"]["test_recorded.py"].endswith("pass\n")
+    # On disk beside the test, rather than sent twice over the wire -- the
+    # response already carries the recording of its own accord.
+    from pathlib import Path
+
+    assert (Path(answer["directory"]) / "recording.json").is_file()
+    assert answer["recording"]["app"]
+
+
+def test_nothing_regenerates_over_a_saved_script(panel):
+    """Saving, then replaying, then keeping is one text throughout."""
+    _with_a_gap(panel)
+    panel.command("stop")
+    mine = "def test_recorded_session(application):\n    pass  # once\n"
+    panel.client.post(f"/v1/sessions/{panel.session}/artifacts", headers=AUTH,
+                      json={"custom_script": mine}).raise_for_status()
+
+    for _ in range(3):
+        panel.client.post(f"/v1/sessions/{panel.session}/replay", headers=AUTH,
+                          json={"timeout": 1.0})
+        again = panel.client.post(f"/v1/sessions/{panel.session}/artifacts",
+                                  headers=AUTH, json={}).json()
+        assert again["files"]["test_recorded.py"] == mine

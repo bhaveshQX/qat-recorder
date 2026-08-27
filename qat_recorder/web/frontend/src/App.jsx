@@ -21,6 +21,19 @@ import LiveScriptEditor from './components/LiveScriptEditor';
 //: one request, short enough that nobody notices the delay.
 const PREVIEW_DELAY_MS = 400;
 
+/** Hand a file to the browser. The panel cannot write to disk any other way. */
+function downloadText(text, filename) {
+  if (!text) return;
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/x-python' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 const S = { IDLE: 'idle', RECORDING: 'recording', PAUSED: 'paused', PICKING: 'picking', STOPPED: 'stopped' };
 
 export default function App() {
@@ -307,12 +320,23 @@ export default function App() {
     if (!sessionId) return;
     try {
       setBusy(true);
-      const scriptToSave = isScriptEdited ? customScript : null;
+      // Whatever is in the pane, always -- typed, filled from a gap, or exactly
+      // as generated. From here on that text *is* the test: it is what replays,
+      // what Keep stores, and what lands on this machine. One script, saved
+      // once, rather than one thing on the VM and a different thing here.
+      const scriptToSave = (isScriptEdited ? customScript : scriptText) || null;
       const res = await api.artifacts(agentUrl, sessionId, scriptToSave, token);
       const fileCount = Object.keys(res.files || {}).length;
+      // ...and onto the tester's own machine, which is where they are sitting.
+      // The VM's copy is the one that runs; this one is the one they can read,
+      // diff and commit without logging in to anything.
+      downloadText(res.files?.['test_recorded.py'] || scriptToSave || '',
+                   `${(appName || 'recorded').replace(/[^\w.-]+/g, '_')}.py`);
       // Written on the agent, beside the application. Nothing is downloaded:
       // the browser never sees these files.
-      updateStatus(`Wrote ${fileCount} file(s) on ${agentHost || 'the agent'}: ${res.directory || 'session directory'}`);
+      setIsScriptEdited(false);      // the saved text is now the generated text
+      updateStatus(`Saved: ${fileCount} file(s) on ${agentHost || 'the agent'} `
+                 + `and the test downloaded here. This is what will replay.`);
     } catch (e) {
       updateStatus(`Could not save: ${e.message}`);
     } finally {

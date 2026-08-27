@@ -733,8 +733,18 @@ class RecorderController:
         self.saved_to = str(out)
         return written
 
-    def generated_files(self) -> dict:
-        """The artifacts for the current recording, as name -> text."""
+    def generated_files(self, script: str = None) -> dict:
+        """The artifacts for the current recording, as name -> text.
+
+        `script` is the test as the operator last saved it. When there is one it
+        is used verbatim -- not regenerated, not merged, not compared. Whatever
+        they saved is the test, and it is the same text whether it is replayed
+        here, kept in the library, or opened on their own machine.
+
+        The recording is still written beside it, because it is what a gap was
+        filled against and what a better emitter could make a fresh script from
+        one day. It is no longer allowed to overrule what the operator saved.
+        """
         from qat_recorder.emit import (  # noqa: PLC0415
             emit_gherkin, emit_python, emit_steps)
 
@@ -749,7 +759,8 @@ class RecorderController:
 
         files = {
             "recording.json": recording.dumps(),
-            "test_recorded.py": emit_python(recording),
+            "test_recorded.py": (script if script is not None
+                                 else emit_python(recording)),
             "recorded.feature": emit_gherkin(recording),
             "steps.py": emit_steps(recording),
             # Empty of overrides, but it lists what the application gave no
@@ -762,7 +773,7 @@ class RecorderController:
             files["unresolved.txt"] = dropped_report(self.session.failures)
         return files
 
-    def save_as(self, name: str, verify: bool = True) -> dict:
+    def save_as(self, name: str, verify: bool = True, script: str = None) -> dict:
         """Keep this recording in the library, and prove it replays.
 
         The proving is the point. Every failure this project has had followed
@@ -785,7 +796,7 @@ class RecorderController:
         case = library.save(
             app=self.app_name or Path(self.app_path).name or "app",
             name=name,
-            files=self.generated_files(),
+            files=self.generated_files(script),
             app_path=self.app_path,
             summary=self.summary())
         self.saved_to = str(case.directory)

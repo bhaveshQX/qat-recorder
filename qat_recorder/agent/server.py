@@ -50,10 +50,11 @@ class Session:
         self.lock = threading.RLock()
         self.picked: Optional[dict] = None
         self.errors: list = []
-        #: Set when the operator saved a script they had typed themselves. That
-        #: file is theirs and nothing regenerates over it; everything else is
-        #: re-emitted from the recording every time it is needed.
-        self.hand_edited = False
+        #: The test as the operator last saved it, or None if they never have.
+        #: Once it is set it is the test: replayed as it stands, kept in the
+        #: library as it stands, and never regenerated over. One script, saved
+        #: once, run everywhere.
+        self.script: Optional[str] = None
         self._stop = threading.Event()
         self._pump: Optional[threading.Thread] = None
 
@@ -321,12 +322,14 @@ class Agent:
                                  409)
             from qat_recorder.emit.python import emit_object_map
 
-            # Remembered, so a later replay knows not to regenerate over it.
+            # Remembered, so everything downstream uses the same text.
             if custom_script is not None:
-                session.hand_edited = True
+                session.script = custom_script
 
             files = {
-                "test_recorded.py": custom_script if custom_script is not None else emit_python(recording),
+                "test_recorded.py": (custom_script if custom_script is not None
+                                     else session.script if session.script is not None
+                                     else emit_python(recording)),
                 "recorded.feature": emit_gherkin(recording),
                 "steps.py": emit_steps(recording),
                 "objects.json": emit_object_map(recording),
@@ -497,7 +500,8 @@ class Agent:
         session = self._require(session_id)
         with session.lock:
             try:
-                return {"test": session.controller.save_as(name, verify=verify)}
+                return {"test": session.controller.save_as(
+                    name, verify=verify, script=session.script)}
             except Exception as error:                        # noqa: BLE001
                 raise AgentError(str(error), 409)
 
@@ -562,7 +566,7 @@ class Agent:
             # A script the operator typed themselves is the exception: that file
             # is theirs, and re-emitting would throw their work away.
             existing = (directory / "test_recorded.py").exists()
-            regenerate = not session.hand_edited or not existing
+            regenerate = session.script is None or not existing
             if regenerate:
                 try:
                     self.artifacts(session_id)
