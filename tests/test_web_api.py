@@ -155,6 +155,7 @@ def test_media_is_listed_and_the_stills_are_fetchable(panel, tmp_path):
     controller.media = SessionMedia(tmp_path / "session", record_video=False,
                                     qat_module=ShootingQat())
     _with_a_gap(panel)
+    controller.media.settle()          # the picture is taken behind the pump
 
     listing = panel.client.get(f"/v1/sessions/{panel.session}/media",
                                headers=AUTH).json()
@@ -177,6 +178,7 @@ def test_a_still_can_be_fetched_with_the_token_in_the_query(panel, tmp_path):
     controller.media = SessionMedia(tmp_path / "session", record_video=False,
                                     qat_module=ShootingQat())
     _with_a_gap(panel)
+    controller.media.settle()
     name = panel.client.get(f"/v1/sessions/{panel.session}/media",
                             headers=AUTH).json()["stills"][0]
 
@@ -456,3 +458,45 @@ def test_a_picture_is_not_named_until_it_exists(panel, tmp_path):
     for step in panel.preview()["steps"]:
         if step["shot"]:
             assert (tmp_path / "session" / "shots" / step["shot"]).is_file()
+
+
+# --- what a replay actually runs -------------------------------------------
+
+def test_a_replay_includes_a_repair_made_after_an_earlier_save(panel, tmp_path):
+    """The one outcome that makes correcting a recording pointless.
+
+    The generated file used to be written once and reused, so a gap filled after
+    a Save -- or after an earlier replay -- was silently left out, and the
+    operator watched a replay of the version they had just corrected.
+    """
+    _with_a_gap(panel)
+    # A Save writes the file...
+    panel.client.post(f"/v1/sessions/{panel.session}/artifacts", headers=AUTH,
+                      json={}).raise_for_status()
+    panel.command("stop")
+
+    # ...and only then is the gap filled.
+    panel.command("repair_drop", index=0,
+                  code="qat.mouse_click({'text': 'Cancel'})")
+    panel.client.post(f"/v1/sessions/{panel.session}/replay", headers=AUTH,
+                      json={"timeout": 1.0})
+
+    written = panel.client.post(f"/v1/sessions/{panel.session}/artifacts",
+                                headers=AUTH, json={}).json()
+    assert "qat.mouse_click({'text': 'Cancel'})" in written["files"]["test_recorded.py"]
+
+
+def test_a_script_the_operator_typed_is_not_regenerated_over(panel):
+    """Their file, their words. Re-emitting would throw the work away."""
+    _with_a_gap(panel)
+    panel.command("stop")
+    mine = "def test_recorded_session(application):\n    pass  # mine\n"
+    panel.client.post(f"/v1/sessions/{panel.session}/artifacts", headers=AUTH,
+                      json={"custom_script": mine}).raise_for_status()
+
+    session = panel.agent.session
+    assert session.hand_edited is True
+    panel.client.post(f"/v1/sessions/{panel.session}/replay", headers=AUTH,
+                      json={"timeout": 1.0})
+    on_disk = (session.directory() / "test_recorded.py").read_text(encoding="utf-8")
+    assert on_disk == mine, "the operator's own script was regenerated over"

@@ -50,6 +50,10 @@ class Session:
         self.lock = threading.RLock()
         self.picked: Optional[dict] = None
         self.errors: list = []
+        #: Set when the operator saved a script they had typed themselves. That
+        #: file is theirs and nothing regenerates over it; everything else is
+        #: re-emitted from the recording every time it is needed.
+        self.hand_edited = False
         self._stop = threading.Event()
         self._pump: Optional[threading.Thread] = None
 
@@ -299,6 +303,7 @@ class Agent:
                     "summary": controller.summary()}
 
     def artifacts(self, session_id: str, custom_script: str = None) -> dict:
+        """Write the session's files. A custom script replaces the test file."""
         from qat_recorder.emit import emit_gherkin, emit_python, emit_steps
 
         session = self._require(session_id)
@@ -315,6 +320,10 @@ class Agent:
                 raise AgentError("recording is not valid: " + "; ".join(problems),
                                  409)
             from qat_recorder.emit.python import emit_object_map
+
+            # Remembered, so a later replay knows not to regenerate over it.
+            if custom_script is not None:
+                session.hand_edited = True
 
             files = {
                 "test_recorded.py": custom_script if custom_script is not None else emit_python(recording),
@@ -541,8 +550,28 @@ class Agent:
                 raise AgentError(
                     "stop the recording before replaying it", 409)
             directory = session.directory()
-            if not (directory / "test_recorded.py").exists():
-                self.artifacts(session_id)
+            # Regenerated every time, not only when the file is missing.
+            #
+            # Filling a gap and inserting a step both change the recording, and
+            # the recording is what the script is made from -- but the file on
+            # disk was written once and then reused, so any repair made after a
+            # Save or an earlier Replay was silently left out. The operator
+            # watched a replay of the version they had just corrected, which is
+            # the one outcome that makes correcting it pointless.
+            #
+            # A script the operator typed themselves is the exception: that file
+            # is theirs, and re-emitting would throw their work away.
+            existing = (directory / "test_recorded.py").exists()
+            regenerate = not session.hand_edited or not existing
+            if regenerate:
+                try:
+                    self.artifacts(session_id)
+                except AgentError:
+                    # Nothing to generate from -- a released session, or one
+                    # whose files were put there by hand. Run what is on disk
+                    # rather than refusing; the file is the test either way.
+                    if not existing:
+                        raise
             return run_pytest(directory,
                               timeout=timeout or DEFAULT_TIMEOUT)
 
