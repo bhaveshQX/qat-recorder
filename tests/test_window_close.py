@@ -16,7 +16,7 @@ from qat_recorder.emit import emit_python
 from qat_recorder.events import Locator, RawEvent, parse_lines
 from qat_recorder.ir import ActionKind
 from tests.fixtures import build_tree
-from tests.test_capture import event
+from tests.test_capture import click_pair, event
 
 
 def close_event(t, cls="QDialog", name="preferences"):
@@ -139,3 +139,131 @@ def test_a_current_filter_gets_the_detailed_diagnosis_instead():
 
     assert "build-filter" not in capture.failures[0]
     assert "row 0 exposes" in capture.failures[0]
+
+
+# --- close events that are nobody closing anything --------------------------
+
+def _session():
+    backend, _ = build_tree()
+    return CaptureSession(backend, app_name="qbittorrent")
+
+
+def _steps(capture):
+    return [action for action in capture.finish().actions
+            if action.kind is not ActionKind.LAUNCH]
+
+
+def test_the_window_qt_wraps_a_widget_in_is_not_a_step():
+    """`menuOptionsWindow` was recorded after nearly every step.
+
+    Every top-level widget has a QWidgetWindow, named after it with "Window"
+    appended. The window system's close reaches it first and is passed on to
+    the widget, which gets its own -- so this one is always a duplicate, and its
+    name is not one Qat can address. Since reported targets were kept rather
+    than dropped, it became `close()` on an object that does not exist, and the
+    replay failed there.
+    """
+    capture = _session()
+    capture.feed_all(click_pair(100, "QPushButton", "loginButton"))
+    capture.feed(event("close_window", 300, "QWidgetWindow", "menuOptionsWindow"))
+    capture.feed_all(click_pair(500, "QPushButton", "loginButton"))
+
+    kinds = [step.kind for step in _steps(capture)]
+    assert ActionKind.CLOSE_WINDOW not in kinds
+    assert kinds == [ActionKind.CLICK, ActionKind.CLICK]
+
+
+def test_a_menu_closing_is_not_a_step():
+    """A menu closes every time an item is chosen from it."""
+    capture = _session()
+    capture.feed(event("close_window", 300, "QMenu", "menuOptions",
+                       path=(("QMenuBar", "menubar"), ("QMainWindow", "MainWindow"))))
+    assert _steps(capture) == []
+
+
+def test_a_menu_of_the_applications_own_class_is_not_a_step_either():
+    """The filter asks Qt what a class inherits; this is the fallback for one
+    built before it learned to, and a QMenu subclass is overwhelmingly named
+    for what it is."""
+    capture = _session()
+    capture.feed(event("close_window", 300, "TorrentContextMenu", "transferMenu"))
+    assert _steps(capture) == []
+
+
+def test_popups_closing_are_not_steps():
+    capture = _session()
+    for at, cls in enumerate(("QComboBoxPrivateContainer", "QTipLabel",
+                              "QCompleter", "QCalendarPopup")):
+        capture.feed(event("close_window", 300 + at, cls, f"popup{at}"))
+    # The list inside a combo box's drop-down closes with it.
+    capture.feed(event("close_window", 400, "QListView", "comboList",
+                       path=(("QComboBoxPrivateContainer", ""),)))
+    assert _steps(capture) == []
+
+
+def test_a_phantom_close_is_not_a_gap_either():
+    """Nobody closed anything, so there is nothing for anybody to repair."""
+    capture = _session()
+    capture.feed(event("close_window", 300, "QWidgetWindow", "menuOptionsWindow"))
+    capture.feed(event("close_window", 301, "QMenu", "menuOptions"))
+    assert capture.finish().drops == []
+
+
+def test_a_dialog_closed_from_its_title_bar_is_still_recorded():
+    """The case the close event exists for. A dialog nobody closed stays open,
+    modal, over every step that follows."""
+    capture = _session()
+    capture.feed(event("close_window", 300, "TorrentCreatorDialog",
+                       "TorrentCreatorDialog",
+                       path=(("QMainWindow", "MainWindow"),)))
+    steps = _steps(capture)
+    assert [step.kind for step in steps] == [ActionKind.CLOSE_WINDOW]
+    assert steps[0].target.definition["objectName"] == "TorrentCreatorDialog"
+
+
+def test_a_real_close_and_its_wrapper_make_one_step_not_two():
+    """The same dismissal arrives twice: once on the QWindow, once on the widget."""
+    capture = _session()
+    capture.feed(event("close_window", 300, "QWidgetWindow",
+                       "TorrentCreatorDialogWindow"))
+    capture.feed(event("close_window", 301, "TorrentCreatorDialog",
+                       "TorrentCreatorDialog",
+                       path=(("QMainWindow", "MainWindow"),)))
+    assert [step.kind for step in _steps(capture)] == [ActionKind.CLOSE_WINDOW]
+
+
+def test_a_qml_window_is_a_real_window():
+    """In a QML application the QQuickWindow *is* the top level, with no widget
+    behind it. Closing it is a step."""
+    from qat_recorder.capture import is_dismissed_window
+
+    assert is_dismissed_window(
+        event("close_window", 300, "QQuickWindow", "mainWindow").target)
+
+
+def test_the_filter_drops_phantom_closes_in_process():
+    """Only the filter can ask what a class inherits from, so the real check
+    lives there; the Python one is the fallback for older builds."""
+    from qat_recorder.native import source_dir
+
+    text = (source_dir() / "qatrec.cpp").read_text(encoding="utf-8")
+    assert "isDismissedWindow" in text
+    assert 'inherits("QWidgetWindow")' in text
+    assert '"QMenu"' in text
+    assert "type == QEvent::Close && !isDismissedWindow(object)" in text
+
+
+def test_the_packaged_filter_is_the_one_in_the_repository():
+    """The wheel carries its own copy of the filter source for `build-filter`
+    on the VM. Editing one and not the other means the VM quietly builds the
+    old filter -- which is exactly how a fix that works here does nothing
+    there."""
+    from pathlib import Path
+
+    from qat_recorder.native import source_dir
+
+    packaged = source_dir()
+    repository = Path(__file__).resolve().parents[1] / "native"
+    for name in ("qatrec.cpp", "CMakeLists.txt", "test_app.cpp"):
+        assert (packaged / name).read_bytes() == (repository / name).read_bytes(), (
+            f"qat_recorder/resources/native/{name} differs from native/{name}")

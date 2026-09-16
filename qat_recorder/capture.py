@@ -177,6 +177,60 @@ def owner_of(locator: Locator) -> Optional[Locator]:
     return None
 
 
+#: Qt's QWindow wrappers. Every top-level widget has one, named after the widget
+#: with "Window" appended -- which is where `menuOptionsWindow` comes from. The
+#: window system's close event reaches the wrapper first and is passed on to the
+#: widget, which then gets a close event of its own; so the wrapper's is always a
+#: duplicate, and its name is not one the application or Qat can address.
+#:
+#: QQuickWindow is deliberately absent. In a QML application the window *is* the
+#: top level, with no widget behind it, and closing it is a real step.
+QWINDOW_WRAPPERS = frozenset({"QWidgetWindow"})
+
+#: Windows that close on their own, as a side effect of being used. A menu
+#: closes every time an item is chosen from it, a combo box's list when a value
+#: is picked, a tooltip when the pointer moves on. None of that is a person
+#: dismissing a window.
+POPUP_CLASSES = frozenset({
+    "QMenu",
+    "QComboBoxPrivateContainer",
+    "QComboBoxListView",
+    "QTipLabel",
+    "QToolTip",
+    "QCompleter",
+    "QCalendarPopup",
+    "QWhatsThat",
+    "QBalloonTip",
+    "QToolBarExtension",
+})
+
+
+def is_dismissed_window(locator: Locator) -> bool:
+    """Whether a close event is a person dismissing a window.
+
+    Only the native filter can say this for certain, because only it can ask Qt
+    what a class inherits from -- a `TorrentContextMenu` is a menu, and nothing
+    in its name has to say so. This is the check for a filter built before it
+    learned to ask, and for anything that still slips through: the reported
+    class, the classes around it, and the one naming convention Qt itself uses.
+    """
+    class_name = (locator.cls or "").strip()
+    if not class_name or class_name in QWINDOW_WRAPPERS:
+        return False
+    if class_name in POPUP_CLASSES:
+        return False
+    # Subclasses of QMenu are overwhelmingly named for it. QMenuBar never
+    # closes, so the suffix is safe to use.
+    if class_name.endswith("Menu"):
+        return False
+    # A popup's contents: the list inside a combo box's drop-down, the view a
+    # completer shows. Closing those is the popup closing.
+    for ancestor, _ in locator.path or ():
+        if ancestor in POPUP_CLASSES:
+            return False
+    return True
+
+
 NOT_ANSWERING = (
     "the application stopped answering Qat. Almost always a native dialog: a "
     "GTK or desktop-portal file picker is not a Qt widget, it is modal, and it "
@@ -667,6 +721,13 @@ class CaptureSession:
         stays open and modal over every step that follows, and each of those
         then fails for reasons of its own.
         """
+        # Most close events are nobody closing anything. Recording them put a
+        # `close()` after nearly every step -- on a menu that was not open by
+        # the time the replay reached it, so the test failed there. Not a step,
+        # and not a gap either: there is nothing the operator did to repair.
+        if not is_dismissed_window(event.target):
+            return
+
         self._flush_input()
         self._pending = None
         resolved = self._resolve(event.target)

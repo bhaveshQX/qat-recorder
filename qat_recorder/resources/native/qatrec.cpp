@@ -358,6 +358,48 @@ const char *kindFor(QEvent::Type type)
     }
 }
 
+// Whether a close event is a person dismissing a window, rather than one of the
+// many close events that are nobody closing anything.
+//
+// Reported unfiltered, these put a close() after nearly every recorded step --
+// on a menu that was no longer open by the time the replay got there, so the
+// test failed at that line. Two kinds, and both are decided here because only
+// in-process can we ask Qt what a class inherits from:
+//
+//   * QWidgetWindow, the QWindow Qt wraps every top-level widget in. It gets the
+//     window system's close first and passes it to the widget, which then gets
+//     its own -- so this one is always a duplicate, named "<widget>Window",
+//     which nothing can address. QQuickWindow is left alone: in a QML
+//     application that window is the top level, and closing it is a step.
+//   * Popups, which close as a side effect of being used: a menu when an item is
+//     chosen, a combo box's list when a value is picked, a tooltip when the
+//     pointer moves on. inherits() walks the whole class chain, so a
+//     TorrentContextMenu is caught without having to be named for it.
+//
+// inherits() compares metaobject class names, so none of this needs QtWidgets
+// linked -- the filter stays usable in applications that have no widgets.
+bool isDismissedWindow(const QObject *object)
+{
+    if (object->inherits("QWidgetWindow"))
+        return false;
+    static const char *const kPopups[] = {
+        "QMenu",
+        "QComboBoxPrivateContainer",
+        "QTipLabel",
+        "QCompleter",
+        "QCalendarPopup",
+        "QWhatsThat",
+        "QBalloonTip",
+        "QToolBarExtension",
+        nullptr,
+    };
+    for (const char *const *popup = kPopups; *popup; ++popup) {
+        if (object->inherits(*popup))
+            return false;
+    }
+    return true;
+}
+
 //: When real window-system input last arrived. QEvent::Shortcut is synthesised
 //: by Qt's shortcut machinery rather than delivered by the window system, so
 //: spontaneous() is false for it and the usual gate would drop every shortcut.
@@ -437,6 +479,9 @@ protected:
             return false;
 
         if (!object)
+            return false;
+
+        if (type == QEvent::Close && !isDismissedWindow(object))
             return false;
 
         std::string line;
