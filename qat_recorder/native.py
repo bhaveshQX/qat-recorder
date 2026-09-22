@@ -58,9 +58,28 @@ def discard_previous(build_path: Path) -> None:
     if cache.exists():
         cache.unlink()
     shutil.rmtree(build_path / "CMakeFiles", ignore_errors=True)
-    stale = list(build_path.glob("libqatrec*.so"))
-    stale += list(build_path.glob("libqatgate.so"))
-    for path in stale:
+
+
+def built_filters(build_path: Path) -> set:
+    """The filter libraries currently in a build directory."""
+    return set(build_path.glob("libqatrec*.so"))
+
+
+def discard_superseded(build_path: Path, keep: Path) -> None:
+    """Remove filters left by an earlier build against a different Qt.
+
+    After the new one exists, never before: a build that fails after the old
+    filter was deleted leaves a directory with no filter in it at all, and the
+    recorder pointed at a path that no longer resolves -- which surfaces as one
+    line of the application's standard error and nowhere else.
+
+    They cannot both stay. `libqatrec.5.15.so` sorts before `libqatrec.6.2.so`,
+    so whatever picks a filter out of this directory by name picks the one that
+    was just replaced.
+    """
+    for path in built_filters(build_path):
+        if path == keep:
+            continue
         try:
             path.unlink()
         except OSError:                              # pragma: no cover
@@ -68,7 +87,8 @@ def discard_previous(build_path: Path) -> None:
 
 
 def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
-          verbose: bool = False, qt_major: Optional[int] = None) -> Path:
+          verbose: bool = False, qt_major: Optional[int] = None,
+          qt_prefix: str = "") -> Path:
     """Configure and build the filter. Returns the path to the library.
 
     `qt_major` forces which Qt to build against, for an application that ships
@@ -82,6 +102,7 @@ def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
     source = source_dir()
     build_path = Path(out_dir).expanduser().resolve()
     build_path.mkdir(parents=True, exist_ok=True)
+    existing = built_filters(build_path)
     discard_previous(build_path)
 
     configure = [
@@ -91,6 +112,10 @@ def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
     ]
     if qt_major:
         configure.append(f"-DQATREC_QT_MAJOR={qt_major}")
+    if qt_prefix:
+        # Where more than one Qt is installed, which is exactly the machine an
+        # application that ships its own Qt tends to be developed on.
+        configure.append(f"-DCMAKE_PREFIX_PATH={qt_prefix}")
     wanted = f"Qt {qt_major}" if qt_major else "Qt"
     _run(configure, "cmake configure", verbose,
          hint=f"{wanted} development headers are usually what is missing here:\n"
@@ -109,11 +134,17 @@ def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
               "That is only needed to build a filter that runs on OTHER "
               "machines; a newer build of this tool falls back automatically.")
 
-    produced = sorted(build_path.glob("libqatrec*.so"))
+    # The one this build made, not the one alphabetically first: after a
+    # rebuild against another Qt both are there, and `libqatrec.5.15.so` sorts
+    # before `libqatrec.6.2.so`.
+    produced = built_filters(build_path)
+    fresh = produced - existing
     if not produced:
         raise BuildError(
             f"the build reported success but produced no library in {build_path}")
-    return produced[0]
+    library = max(fresh or produced, key=lambda path: path.stat().st_mtime)
+    discard_superseded(build_path, library)
+    return library
 
 
 def gate_of(library) -> Optional[Path]:

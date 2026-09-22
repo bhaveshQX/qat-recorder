@@ -37,9 +37,29 @@ if [ "${USE_GATE}" = "1" ]; then
         QATREC_PRELOAD="${QATREC_PRELOAD:+${QATREC_PRELOAD}:}${QATREC_LIB}"
     fi
     export QATREC_PRELOAD
-    # $$ survives the `exec` below, so this stays the pid Qat is watching.
-    QATREC_PID=$$
-    export QATREC_PID
+    # The application, not the shell that starts it.
+    #
+    # The gate instruments the process Qat launched as well as any descendant
+    # that has Qt, which is right when that process IS the application: a
+    # binary, or an interpreter that will load Qt later. A launch script is not
+    # the application, and injecting into it does active harm.
+    #
+    # Qat's injector prints on the way out as well as on the way in: OnUnload,
+    # to stdout, from a destructor. A shell forks for every `$(...)`, and a
+    # substitution made of builtins -- `$(cd "$(dirname "$0")/.." && pwd)` is
+    # the usual one -- exits that fork without exec'ing anything, so the
+    # destructor runs and the substitution captures the word. The script's idea
+    # of its own root becomes the path with OnUnload stuck on the end of it,
+    # every path built from it is wrong, and the application reports that its
+    # configuration files cannot be found. Nothing anywhere says injection had
+    # anything to do with it.
+    #
+    # $$ survives the `exec` below, so where it is wanted it stays the pid Qat
+    # is watching.
+    if [ "${QATREC_APP_IS_SCRIPT:-0}" != "1" ]; then
+        QATREC_PID=$$
+        export QATREC_PID
+    fi
     export LD_PRELOAD="${QATREC_GATE}"
 elif [ -n "${QATREC_LIB:-}" ]; then
     if [ -n "${LD_PRELOAD:-}" ]; then
@@ -84,5 +104,23 @@ fi
 case "${QATREC_APP}" in
     */*) cd "${QATREC_APP%/*}" || exit 1 ;;
 esac
+
+# What the application is actually being started with, for comparing against a
+# launch by hand. An application that starts from a terminal and not from here
+# differs in exactly one of these, and reading them beats guessing.
+#
+# $PWD rather than $(pwd): a parameter, not a command substitution. Every line
+# goes to stderr, which nothing captures.
+if [ "${QATREC_GATE_DEBUG:-0}" = "1" ]; then
+    {
+        echo "qatrec-wrapper: cwd          ${PWD}"
+        echo "qatrec-wrapper: app          ${QATREC_APP}"
+        echo "qatrec-wrapper: args         $*"
+        echo "qatrec-wrapper: LD_PRELOAD   ${LD_PRELOAD:-}"
+        echo "qatrec-wrapper: preload      ${QATREC_PRELOAD:-}"
+        echo "qatrec-wrapper: inject pid   ${QATREC_PID:-(not this process)}"
+        echo "qatrec-wrapper: theme        [${QT_QPA_PLATFORMTHEME-unset}]"
+    } >&2
+fi
 
 exec "${QATREC_APP}" "$@"

@@ -130,6 +130,42 @@ def test_the_wrapper_preloads_the_gate_and_stashes_the_rest():
     assert "QATREC_PID=$$" in text
 
 
+def test_the_launching_shell_is_not_injected_when_it_is_a_script():
+    """A launch script is not the application, and injecting into it does
+    active harm.
+
+    Qat's injector prints `OnUnload` to stdout from a destructor -- the symbol
+    sits beside std::cout in libinjector.so. A shell forks for every `$(...)`,
+    and a substitution made of builtins, which is how a script finds its own
+    root, exits that fork without exec'ing anything: the destructor runs and
+    the substitution captures the word. Every path built from that root is
+    then wrong, and the application reports that its configuration files
+    cannot be found.
+    """
+    text = wrapper_source()
+    assert 'if [ "${QATREC_APP_IS_SCRIPT:-0}" != "1" ]; then' in text
+    assert "QATREC_PID=$$" in text
+    assert "OnUnload" in text, "the reason has to travel with the code"
+
+
+def test_the_recorder_tells_the_wrapper_when_the_application_is_a_script():
+    """Both halves, or the wrapper defaults to injecting and the bug returns."""
+    controller = (ROOT / "qat_recorder" / "ui"
+                  / "controller.py").read_text(encoding="utf-8")
+    cli = (ROOT / "qat_recorder" / "cli.py").read_text(encoding="utf-8")
+    for source in (controller, cli):
+        assert 'os.environ["QATREC_APP_IS_SCRIPT"]' in source
+
+
+def test_the_wrapper_can_say_what_it_launched_with():
+    """An application that starts from a terminal and not from the recorder
+    differs in exactly one of these."""
+    text = wrapper_source()
+    assert 'if [ "${QATREC_GATE_DEBUG:-0}" = "1" ]; then' in text
+    assert "${PWD}" in text          # never $(pwd): see the file's own reasons
+    assert ">&2" in text
+
+
 def test_the_wrapper_still_works_without_a_gate():
     """An older filter build has no gate beside it. Preloading everything is
     what the recorder always did, and it is right for an application that is
@@ -566,6 +602,72 @@ def test_nothing_is_claimed_when_nothing_is_known(tmp_path):
     assert launch.qt_mismatch("", "/x/libqatrec.5.15.so") == ""
 
 
+def test_the_exact_qt_an_application_carries_is_read_from_its_file_name(tmp_path):
+    """`libQt6Core.so.6` is a symlink; `libQt6Core.so.6.8.6` is the answer."""
+    app = bundled_app(tmp_path)
+    (tmp_path / "lib" / "Qt" / "lib" / "libQt6Core.so.6.8.6").write_bytes(b"x")
+    assert launch.bundled_qt_version(app) == (6, 8, 6)
+
+
+def test_a_filter_built_against_a_newer_qt_minor_is_reported(tmp_path):
+    """The direction matters. 6.2 inside 6.8.6 is what Qt guarantees; 6.10
+    inside 6.8.6 can reference symbols that application's Qt does not have, and
+    then the newest Qt installed on the machine decides whether recording
+    works."""
+    app = bundled_app(tmp_path)
+    (tmp_path / "lib" / "Qt" / "lib" / "libQt6Core.so.6.8.6").write_bytes(b"x")
+
+    warning = launch.qt_mismatch(app, "/x/libqatrec.6.10.so")
+    assert "built against Qt 6.10" in warning
+    assert "carries Qt 6.8.6" in warning
+    assert "forward, not backward" in warning
+
+    assert launch.qt_mismatch(app, "/x/libqatrec.6.2.so") == ""
+    assert launch.qt_mismatch(app, "/x/libqatrec.6.8.so") == ""
+
+
+def test_no_version_no_claim(tmp_path):
+    """Without the versioned file there is nothing to compare, and a guess
+    about somebody's build is worse than silence."""
+    app = bundled_app(tmp_path)
+    assert launch.bundled_qt_version(app) is None
+    assert launch.qt_mismatch(app, "/x/libqatrec.6.10.so") == ""
+
+
+# --- what a session cannot start without ------------------------------------
+
+def test_a_filter_that_is_not_there_is_said_before_anything_starts(tmp_path):
+    """It fails five layers down otherwise: one line of the application's
+    standard error, while the panel says recording and no event arrives."""
+    folder = tmp_path / "qatrec-filter"
+    folder.mkdir()
+    (folder / "libqatrec.6.2.so").write_bytes(b"the one that is there")
+
+    missing = launch.missing_pieces("", str(folder / "libqatrec.6.10.so"))
+    assert "libqatrec.6.10.so is not there" in missing
+    # And what is, because that is the answer.
+    assert "libqatrec.6.2.so" in missing
+
+
+def test_an_empty_build_directory_says_that_instead(tmp_path):
+    folder = tmp_path / "qatrec-filter"
+    folder.mkdir()
+    assert "no filter at all" in launch.missing_pieces(
+        "", str(folder / "libqatrec.6.2.so"))
+
+
+def test_no_filter_at_all_is_a_complete_sentence():
+    assert "build-filter" in launch.missing_pieces("/some/app", "")
+
+
+def test_an_application_that_is_not_there_is_reported_too(tmp_path):
+    lib = tmp_path / "libqatrec.6.2.so"
+    lib.write_bytes(b"filter")
+    assert "is not there" in launch.missing_pieces(str(tmp_path / "gone"),
+                                                   str(lib))
+    assert launch.missing_pieces(str(lib), str(lib)) == ""
+
+
 # --- building the right filter ----------------------------------------------
 
 def test_a_rebuild_does_not_inherit_the_previous_builds_qt(tmp_path):
@@ -580,22 +682,39 @@ def test_a_rebuild_does_not_inherit_the_previous_builds_qt(tmp_path):
     (tmp_path / "CMakeFiles").mkdir()
     (tmp_path / "CMakeFiles" / "junk").write_text("x", encoding="utf-8")
     (tmp_path / "libqatrec.5.15.so").write_bytes(b"old filter")
-    (tmp_path / "libqatgate.so").write_bytes(b"old gate")
-    (tmp_path / "keep.txt").write_text("not ours", encoding="utf-8")
 
     discard_previous(tmp_path)
 
     assert not (tmp_path / "CMakeCache.txt").exists()
     assert not (tmp_path / "CMakeFiles").exists()
-    assert not (tmp_path / "libqatrec.5.15.so").exists()
-    assert not (tmp_path / "libqatgate.so").exists()
-    assert (tmp_path / "keep.txt").exists()
+    # The filter that is there stays there until a new one exists: a build that
+    # fails must not leave the machine with no filter and the recorder pointed
+    # at a path that no longer resolves.
+    assert (tmp_path / "libqatrec.5.15.so").exists()
+
+
+def test_the_superseded_filter_goes_only_once_the_new_one_is_built(tmp_path):
+    from qat_recorder.native import discard_superseded
+
+    old = tmp_path / "libqatrec.5.15.so"
+    new = tmp_path / "libqatrec.6.2.so"
+    old.write_bytes(b"old")
+    new.write_bytes(b"new")
+    (tmp_path / "libqatgate.so").write_bytes(b"gate")
+
+    discard_superseded(tmp_path, keep=new)
+
+    assert new.exists()
+    assert not old.exists()
+    # The gate belongs to whichever filter is there; it is not Qt-specific.
+    assert (tmp_path / "libqatgate.so").exists()
 
 
 def test_discarding_is_fine_in_a_directory_that_has_nothing_in_it(tmp_path):
-    from qat_recorder.native import discard_previous
+    from qat_recorder.native import discard_previous, discard_superseded
 
-    discard_previous(tmp_path)          # must not raise
+    discard_previous(tmp_path)                                # must not raise
+    discard_superseded(tmp_path, keep=tmp_path / "nothing")   # nor this
 
 
 def test_the_build_can_be_told_which_qt_to_use():

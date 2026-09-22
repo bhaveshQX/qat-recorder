@@ -18,7 +18,7 @@ import pytest
 
 from qat_recorder.library import TestLibrary
 from qat_recorder.ui.controller import RecorderController
-from tests.fixtures import build_tree
+from tests.fixtures import build_tree, real_paths
 from tests.test_capture import click_pair
 from tests.test_ui_controller import FakeQat, FakeReceiver
 
@@ -31,8 +31,9 @@ def recorded(tmp_path, monkeypatch):
     monkeypatch.setenv("QATREC_TESTS", str(tmp_path))
     backend, _ = build_tree()
     receiver = FakeReceiver()
+    app, lib = real_paths(tmp_path)
     controller = RecorderController(
-        FakeQat(), lib_path="/tmp/lib.so", app_path="/tmp/sample",
+        FakeQat(), lib_path=lib, app_path=app,
         app_name="sample", backend=backend, receiver=receiver)
     controller.start()
     receiver.push(*click_pair(1000, "QPushButton", "loginButton"))

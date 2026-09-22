@@ -190,6 +190,20 @@ def _cmd_record(args) -> int:
         print(str(error), file=sys.stderr)
         return 2
 
+    from qat_recorder.launch import (close, gate_env, is_script,
+                                     missing_pieces, qt_mismatch, start)
+
+    # Before anything is started or listened on: a filter that is not there
+    # fails inside the application, long after everything looks fine.
+    missing = missing_pieces(args.app, args.lib)
+    if missing:
+        print(missing, file=sys.stderr)
+        return 2
+
+    warning = qt_mismatch(args.app, args.lib)
+    if warning:
+        print(warning, file=sys.stderr)
+
     receiver = EventReceiver(port=0)
     receiver.start()
     os.environ["QATREC_PORT"] = str(receiver.actual_port)
@@ -199,17 +213,13 @@ def _cmd_record(args) -> int:
     # The gate decides which processes get the injector. Without it, an
     # application started by a launch script never starts at all: see
     # native/qatgate.c.
-    from qat_recorder.launch import close, gate_env, qt_mismatch, start
-
-    warning = qt_mismatch(args.app, args.lib)
-    if warning:
-        print(warning, file=sys.stderr)
-
     gate = gate_env(args.app, args.lib)
     if gate:
         os.environ["QATREC_GATE"] = gate
     else:
         os.environ.pop("QATREC_GATE", None)
+    os.environ["QATREC_APP_IS_SCRIPT"] = (
+        "1" if is_script(args.app) else "0")
 
     # Qat locks the application's UI during a test run so stray input cannot
     # corrupt it. While recording that is backwards -- it would block the very
@@ -452,7 +462,7 @@ def _cmd_build_filter(args) -> int:
         print(f"source: {source_dir()}")
         library = build(args.out, with_test_app=args.with_test_app,
                         jobs=args.jobs, verbose=args.verbose,
-                        qt_major=qt_major)
+                        qt_major=qt_major, qt_prefix=args.qt_prefix)
     except BuildError as error:
         print(f"\n{error}", file=sys.stderr)
         return 1
@@ -464,6 +474,28 @@ def _cmd_build_filter(args) -> int:
         # Printed because an application started by a launch script does not
         # record without it.
         print(f"       {gate}  (used automatically)")
+    # Built too new is as broken as built for the wrong major, and far less
+    # obvious: compatibility within a Qt major runs forward only.
+    if getattr(args, "app", ""):
+        from qat_recorder.launch import bundled_qt_version, filter_qt_version
+
+        carried = bundled_qt_version(args.app)
+        built_for = filter_qt_version(library)
+        if carried and built_for and built_for[0] == carried[0] \
+                and built_for[1] > carried[1]:
+            version = ".".join(str(part) for part in carried)
+            print(f"\n{library.name} was built against Qt {built_for[0]}."
+                  f"{built_for[1]}, but {Path(args.app).name} carries Qt "
+                  f"{version}.", file=sys.stderr)
+            print("Qt is binary compatible forward, not backward: this filter "
+                  "can reference\nsymbols that application's Qt does not have. "
+                  "This machine has more than one\nQt installed -- point at the "
+                  "older one and build again:\n", file=sys.stderr)
+            print(f"  python -m qat_recorder build-filter --out {args.out} "
+                  f"--app {args.app} \\\n      --qt-prefix "
+                  "/usr/lib/x86_64-linux-gnu/cmake", file=sys.stderr)
+            return 1
+
     print(f"\nbuilt against Qt {library.name.split('.')[1]}; the application "
           "must use the same major version")
     print("\nrecord with it:")
@@ -762,6 +794,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--app", default="",
         help="the application this filter is for; an application that ships "
              "its own Qt decides which Qt to build against")
+    build_parser.add_argument(
+        "--qt-prefix", default="",
+        help="where to find that Qt, when more than one is installed "
+             "(e.g. /usr/lib/x86_64-linux-gnu/cmake)")
     build_parser.add_argument("--jobs", type=int, default=0)
     build_parser.add_argument("--verbose", action="store_true",
                               help="show full compiler output")

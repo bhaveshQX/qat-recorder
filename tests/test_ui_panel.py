@@ -33,12 +33,14 @@ def qt_app():
 
 
 @pytest.fixture()
-def panel(qt_app):
+def panel(qt_app, tmp_path):
     backend, nodes = build_tree()
     nodes["username"].props["text"] = "alice"
     receiver = FakeReceiver()
+    from tests.fixtures import real_paths
+    app, lib = real_paths(tmp_path)
     controller = RecorderController(
-        FakeQat(), lib_path="/tmp/lib.so", app_path="/tmp/app",
+        FakeQat(), lib_path=lib, app_path=app,
         app_name="sample", backend=backend, receiver=receiver)
     widget = RecorderPanel(controller=controller)
     widget._test = {"receiver": receiver, "nodes": nodes}
@@ -113,6 +115,15 @@ def test_the_suite_cannot_be_run_while_recording(suite):
 
 
 # --- wiring ----------------------------------------------------------------
+
+def test_the_panel_does_not_erase_the_paths_it_was_built_around(panel):
+    """Recording configures the controller from the fields, so a panel built
+    around a configured controller and left blank would wipe it -- and then
+    refuse to start, for a reason that reads as though nobody had chosen
+    anything."""
+    assert panel.field_app.text() == panel.controller.app_path
+    assert panel.field_lib.text() == panel.controller.lib_path
+
 
 def test_panel_starts_idle_with_only_record_enabled(panel):
     assert panel.act_record.isEnabled()

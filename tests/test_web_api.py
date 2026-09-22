@@ -24,7 +24,7 @@ from qat_recorder.agent.server import Agent                     # noqa: E402
 from qat_recorder.emit.python import DROP_MARKER                # noqa: E402
 from qat_recorder.ui.controller import RecorderController       # noqa: E402
 from qat_recorder.web.app import create_app                     # noqa: E402
-from tests.fixtures import build_tree                           # noqa: E402
+from tests.fixtures import build_tree, real_paths                           # noqa: E402
 from tests.test_capture import click_pair                       # noqa: E402
 from tests.test_ui_controller import FakeQat, FakeReceiver      # noqa: E402
 
@@ -48,9 +48,12 @@ class Panel:
             backend, nodes = build_tree()
             receiver = FakeReceiver()
             self.receivers.append(receiver)
+            # The paths in the request are protocol payloads; a session
+            # refuses to start unless what it is handed is on disk.
+            real_app, real_lib = real_paths()
             return RecorderController(
-                FakeQat(), lib_path=lib, app_path=app, app_name=name or app,
-                backend=backend, receiver=receiver)
+                FakeQat(), lib_path=real_lib, app_path=real_app,
+                app_name=name or app, backend=backend, receiver=receiver)
 
         self.agent = Agent(TOKEN, controller_factory=factory,
                            host_name="test-vm")

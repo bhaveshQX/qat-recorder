@@ -184,6 +184,44 @@ def gate_for(lib_path) -> Optional[str]:
     return str(candidate) if candidate.exists() else None
 
 
+def missing_pieces(app_path, lib_path) -> str:
+    """What a session cannot start without, checked before it is started.
+
+    A filter path that does not exist fails five layers down, inside the
+    application, as one line on the agent's standard error:
+
+        qatrec-gate: could not load: /home/x/qatrec-filter/libqatrec.6.10.so
+        qatrec-gate:   reason: cannot open shared object file
+
+    Everything else looks like it worked -- the application opens, the panel
+    says recording -- and no event ever arrives. A path is a thing we can check
+    in a microsecond, so it is checked where somebody is looking.
+    """
+    problems = []
+    if not lib_path:
+        problems.append(
+            "no event filter was given. Build one with `python -m "
+            "qat_recorder build-filter` and give the panel the "
+            "libqatrec.*.so it produces.")
+    elif not Path(lib_path).exists():
+        # os.path for the name in the message, Path for the questions about
+        # disk: a posix path must come back out of the message as the posix
+        # path that went in, wherever the panel happens to be running.
+        shown = os.path.dirname(str(lib_path))
+        folder = Path(lib_path).parent
+        built = sorted(path.name for path in folder.glob("libqatrec*.so")) \
+            if folder.is_dir() else []
+        detail = (f" {shown} holds " + ", ".join(built)) if built else \
+            (f" {shown} holds no filter at all" if folder.is_dir()
+             else f" {shown} does not exist")
+        problems.append(
+            f"the event filter {lib_path} is not there.{detail}. Nothing is "
+            "recorded without it.")
+    if app_path and not Path(app_path).exists():
+        problems.append(f"the application {app_path} is not there.")
+    return "\n".join(problems)
+
+
 def gate_env(app_path, lib_path) -> Optional[str]:
     """The gate to use for this application, or None to preload as before.
 
@@ -293,9 +331,66 @@ def _find_within(base: Path, name: str, depth: int,
 
 def filter_qt_major(lib_path) -> Optional[int]:
     """The Qt major the filter was built against, from its name."""
-    match = re.match(r"^libqatrec\.(\d+)\.", Path(lib_path).name) if lib_path \
-        else None
-    return int(match.group(1)) if match else None
+    version = filter_qt_version(lib_path)
+    return version[0] if version else None
+
+
+def filter_qt_version(lib_path) -> Optional[tuple]:
+    """The Qt the filter was built against. `libqatrec.6.2.so` -> (6, 2)."""
+    if not lib_path:
+        return None
+    match = re.match(r"^libqatrec\.(\d+)\.(\d+)\.so$", Path(lib_path).name)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def bundled_qt_version(app_path, depth: int = None) -> Optional[tuple]:
+    """The exact Qt an application carries, from the file name it carries it as.
+
+    `libQt6Core.so.6.8.6` is what the SONAME `libQt6Core.so.6` points at, and
+    the full version is the part that matters for which way compatibility runs.
+    """
+    if not app_path:
+        return None
+    try:
+        application = Path(app_path).resolve()
+        if not application.exists():
+            return None
+    except OSError:                                   # pragma: no cover
+        return None
+
+    best = None
+    for base in _bundle_roots(application.parent):
+        for found in _versioned_qt_cores(base,
+                                         depth if depth is not None
+                                         else BUNDLE_DEPTH):
+            if best is None or found > best:
+                best = found
+    return best
+
+
+def _versioned_qt_cores(base: Path, depth: int,
+                        budget: int = 2000) -> list:
+    """Every `libQt[56]Core.so.<major>.<minor>.<patch>` under `base`."""
+    pattern = re.compile(r"^libQt[56]Core\.so\.(\d+)\.(\d+)\.(\d+)$")
+    versions = []
+    roots = [(base, 0)]
+    while roots and budget > 0:
+        budget -= 1
+        folder, level = roots.pop()
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                match = pattern.match(entry.name)
+                if match:
+                    versions.append(tuple(int(n) for n in match.groups()))
+                elif entry.is_dir() and level < depth:
+                    roots.append((entry, level + 1))
+            except OSError:                           # pragma: no cover
+                continue
+    return versions
 
 
 def qt_mismatch(app_path, lib_path) -> str:
@@ -304,11 +399,29 @@ def qt_mismatch(app_path, lib_path) -> str:
     A warning and not a refusal: this is read off a directory listing, and a
     guess is not allowed to stop somebody recording.
     """
-    major = filter_qt_major(lib_path)
-    if major is None:
+    built = filter_qt_version(lib_path)
+    if built is None:
         return ""
+    major = built[0]
     majors = bundled_qt_majors(app_path)
-    if not majors or major in majors:
+    if not majors:
+        return ""
+
+    if major in majors:
+        # Right major version. Compatibility within it runs one way only: a
+        # filter built against 6.2 works inside a 6.8 application, and one
+        # built against 6.10 does not -- it can reference symbols the
+        # application's Qt does not have, and then it is the newest Qt on this
+        # machine that decides whether recording works.
+        carried = bundled_qt_version(app_path)
+        if carried and carried[0] == major and built[1] > carried[1]:
+            version = ".".join(str(part) for part in carried)
+            return (f"{Path(lib_path).name} was built against Qt {built[0]}."
+                    f"{built[1]}, but {Path(app_path).name} carries Qt "
+                    f"{version}. Qt is binary compatible forward, not "
+                    "backward, so a filter built against a newer minor can "
+                    "reference symbols this application's Qt does not have. "
+                    f"Build against Qt {carried[0]}.{carried[1]} or older.")
         return ""
     carries = " and ".join(f"Qt {one}" for one in sorted(majors))
     wanted = min(majors)

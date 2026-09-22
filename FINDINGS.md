@@ -371,6 +371,30 @@ library that reads two environment variables and returns. It is used only for an
 application that is a script; a binary keeps the injector in its own
 `LD_PRELOAD`, exactly as before.
 
+**Qat's injector prints on unload as well as on load** [binary] [live]
+
+`OnUnload` is a function in `libinjector.so`, beside `std::cout` in the same
+symbol table, and it writes to stdout. It is the same bug as the one above, seen
+only after that one was fixed, and it is worse because nothing in the output
+connects it to injection.
+
+A shell forks for every `$(...)`. A substitution made only of builtins --
+`$(cd "$(dirname "$0")/.." && pwd)`, which is how most launch scripts find their
+own root -- exits that fork without exec'ing anything, so the library
+destructors run in it and the substitution captures the word. The script's root
+becomes the path with `OnUnload` on the end, every path built from it is wrong,
+and the application reports:
+
+    spine cannot start because the configuration files cannot be found
+
+with `./storescp_carm_ge: not found` beside it. Running the same script by hand
+is fine, because by hand nothing has injected anything into the shell.
+
+So the gate no longer instruments the launched process when that process is a
+script (`QATREC_APP_IS_SCRIPT`). A script is not the application: Qt never
+appears in it, injecting into it gains nothing, and the only thing it can
+contribute is output.
+
 **Qat waits for a port file named after the process it launched** [source]
 
 `create_qat_config_file_path(context.pid)` -> `$TEMP/qat-<pid>.txt`, where the

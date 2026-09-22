@@ -63,6 +63,10 @@ cat ~/.qatrec/token
 cd ~/Downloads
 ~/qatrec/bin/pip install --force-reinstall qat_recorder-0.1.0-py3-none-any.whl
 ~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter
+
+# --force-reinstall reinstalls qat too, which puts back any server library that
+# was standing in for an unloadable one:
+~/qatrec/bin/python -m qat_recorder qat-servers --fix
 ```
 
 ## VM — the filter has to match the application's Qt
@@ -74,10 +78,17 @@ says nothing. An application that ships its own Qt (a `lib/Qt/lib` beside its
 
 ```bash
 sudo apt install qt6-base-dev         # RHEL: sudo dnf install qt6-qtbase-devel
-~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter --qt 6
 
-# or let the application decide:
+# let the application decide which Qt, rather than this machine:
 ~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter     --app /path/to/start_app.sh
+```
+
+The minor version matters too, and only in one direction: a filter built
+against Qt 6.2 works inside a 6.8 application, one built against 6.10 does not.
+Where several Qts are installed, say which:
+
+```bash
+~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter     --app /path/to/start_app.sh --qt-prefix /usr/lib/x86_64-linux-gnu/cmake
 ```
 
 Then give the panel the `libqatrec.6.*.so` it built. Each build starts from

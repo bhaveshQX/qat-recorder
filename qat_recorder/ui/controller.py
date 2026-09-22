@@ -169,6 +169,12 @@ class RecorderController:
         if self._state not in (State.IDLE, State.STOPPED):
             raise ControllerError(f"cannot start while {self._state.value}")
 
+        # Before anything is started, because afterwards a missing filter looks
+        # like an application that produces no events.
+        missing = launch.missing_pieces(self.app_path, self.lib_path)
+        if missing:
+            raise ControllerError(missing)
+
         if self._owns_receiver:
             from qat_recorder.events import EventReceiver  # noqa: PLC0415
             self._receiver = EventReceiver(port=0)
@@ -188,6 +194,10 @@ class RecorderController:
             os.environ["QATREC_GATE"] = gate
         else:
             os.environ.pop("QATREC_GATE", None)
+        # A launch script is not the application, and nothing is gained by
+        # injecting Qat into the shell that is trying to start one.
+        os.environ["QATREC_APP_IS_SCRIPT"] = (
+            "1" if launch.is_script(self.app_path) else "0")
 
         # Qat locks the application's UI during a test run so stray input cannot
         # corrupt it. While recording that is exactly backwards -- it would block

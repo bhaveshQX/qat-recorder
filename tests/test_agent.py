@@ -20,7 +20,7 @@ from qat_recorder.agent.security import (
 )
 from qat_recorder.agent.server import Agent, AgentServer
 from qat_recorder.ui.controller import RecorderController
-from tests.fixtures import build_tree
+from tests.fixtures import build_tree, real_paths
 from tests.test_capture import click_pair, event
 from tests.test_ui_controller import FakeQat, FakeReceiver
 
@@ -40,9 +40,12 @@ class Harness:
             self.nodes = nodes
             receiver = FakeReceiver()
             self.receivers.append(receiver)
+            # The paths in the request are protocol payloads; a session
+            # refuses to start unless what it is handed is on disk.
+            real_app, real_lib = real_paths()
             return RecorderController(
-                FakeQat(), lib_path=lib, app_path=app, app_name=name or app,
-                backend=backend, receiver=receiver)
+                FakeQat(), lib_path=real_lib, app_path=real_app,
+                app_name=name or app, backend=backend, receiver=receiver)
 
         self.agent = Agent(
             TOKEN, controller_factory=factory,

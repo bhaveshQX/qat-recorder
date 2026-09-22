@@ -2,12 +2,13 @@
 """Tests for the recording session controller (no Qt, no application)."""
 
 import json
+from pathlib import Path
 
 import pytest
 
 from qat_recorder.ir import ActionKind
 from qat_recorder.ui.controller import ControllerError, RecorderController, State
-from tests.fixtures import build_tree
+from tests.fixtures import build_tree, real_paths
 from tests.test_capture import click_pair, event
 
 
@@ -59,8 +60,25 @@ class FakeQat:
         self.calls.append(("close", context))
 
 
+def test_a_session_refuses_to_start_without_the_filter_it_was_given(controller):
+    """The panel is where somebody is looking. Inside the application, a filter
+    that is not there is one line on the agent's standard error, while the
+    panel says recording and no event ever arrives."""
+    controller.lib_path = str(Path(controller.lib_path).parent / "gone.so")
+    with pytest.raises(ControllerError) as error:
+        controller.start()
+    assert "is not there" in str(error.value)
+    # And nothing was started, so nothing has to be cleaned up.
+    assert controller._test["qat"].calls == []
+
+
 @pytest.fixture()
-def controller():
+def controller(tmp_path):
+    # A session refuses to start when the filter it was given is not on disk,
+    # because that failure otherwise surfaces as one line of the application's
+    # standard error and a recording with no events in it.
+    app, lib = real_paths(tmp_path)
+
     backend, nodes = build_tree()
     nodes["username"].props["text"] = "alice"
     receiver = FakeReceiver()
@@ -70,7 +88,7 @@ def controller():
     picked = []
     errors = []
     ctrl = RecorderController(
-        qat, lib_path="/tmp/lib.so", app_path="/tmp/app", app_name="sample",
+        qat, lib_path=lib, app_path=app, app_name="sample",
         backend=backend, receiver=receiver,
         on_state=states.append,
         on_action=actions.append,

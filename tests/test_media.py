@@ -258,8 +258,10 @@ def test_scrolling_is_never_photographed(tmp_path):
 
     backend, _ = sliders()
     receiver = FakeReceiver()
+    from tests.fixtures import real_paths
+    app, lib = real_paths(tmp_path)
     controller = RecorderController(
-        ControllerQat(), lib_path="/tmp/lib.so", app_path="/tmp/app",
+        ControllerQat(), lib_path=lib, app_path=app,
         app_name="sample", backend=backend, receiver=receiver)
 
     camera = FakeQat()

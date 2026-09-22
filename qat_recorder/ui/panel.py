@@ -139,6 +139,15 @@ class RecorderPanel(QMainWindow):
         self._picking_hint_shown = False
         self._browse_buttons = []
 
+        # A controller that was handed paths keeps them. Recording reads the
+        # fields and configures the controller from them, so a panel built
+        # around a configured controller and left blank would quietly erase
+        # what it was given.
+        if controller is not None:
+            lib_path = lib_path or getattr(controller, "lib_path", "")
+            app_path = app_path or getattr(controller, "app_path", "")
+            app_name = app_name or getattr(controller, "app_name", "")
+
         self._build_toolbar()
         self._build_body(lib_path, app_path, app_name)
         self.statusBar().showMessage("Ready")

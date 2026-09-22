@@ -94,3 +94,32 @@ def build_tree():
         "options_title": options_title, "preferences_item": preferences_item,
     }
     return FakeBackend([window]), nodes
+
+
+def real_paths(folder=None):
+    """A filter and an application that exist, for a controller to be given.
+
+    A session refuses to start when the filter it was handed is not on disk,
+    because that failure otherwise shows up as one line of the application's
+    standard error while the panel says recording and no event ever arrives
+    (`launch.missing_pieces`). Tests that are about sessions rather than about
+    launching still have to hand it something real.
+
+    The application is given ELF magic so it reads as a binary rather than a
+    launch script: a script makes the recorder follow the application into a
+    child process, which is a different code path and a real wait.
+    """
+    import tempfile
+    from pathlib import Path
+
+    # Its own subdirectory: a test that also uses this folder for the saved
+    # test library wants to create a directory named after the application,
+    # and a file of that name sitting there is in the way.
+    folder = Path(folder) if folder is not None else Path(tempfile.mkdtemp())
+    folder = folder / "install"
+    folder.mkdir(parents=True, exist_ok=True)
+    lib = folder / "libqatrec.6.2.so"
+    lib.write_bytes(b"\x7fELF not really a filter")
+    app = folder / "sample"
+    app.write_bytes(b"\x7fELF not really an application")
+    return str(app), str(lib)
