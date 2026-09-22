@@ -168,6 +168,34 @@ and newer** — not RHEL 9, not Ubuntu 22.04.
 For a fleet spanning Ubuntu, RHEL, CentOS and Rocky, a source build of the Qat
 server is required from day one.
 
+### The prediction above, confirmed live [live]
+
+A medical imaging product that bundles Qt 6.8.6 in its own `lib/Qt/lib`, on
+Ubuntu 22.04 (glibc 2.35):
+
+    Detected Qt version 6.8.6
+    QtCore library found at .../spine.Build3383/bin/../lib/Qt/lib/libQt6Core.so.6
+    Loaded Qat server from: ".../qat/bin/libQatServer.6.8.so"
+    Failed to load Qat server: ...
+    /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
+
+Injection reached the application and identified its bundled Qt correctly. The
+server built for that Qt could not be loaded at all, so nothing ever answered
+and the session timed out. The application starts perfectly by hand -- by hand
+nothing loads that file into it -- which is exactly what makes this look like a
+recorder problem for as long as nobody reads the application's own output.
+
+An application bundling its own Qt makes this much more likely than the
+distribution matrix suggests: the Qt it ships has nothing to do with the Qt the
+distribution has, so a machine that could never install Qt 6.8 can still be
+asked for the Qt 6.8 server.
+
+`qat_recorder/servers.py` measures every shipped server against the machine and
+stands the newest loadable one of the same major version in for one that cannot
+load -- Qt is binary compatible forward, so a server built against 6.7 runs
+inside a 6.8.6 application. `python -m qat_recorder qat-servers`, and
+`install.sh vm` now does it on arrival.
+
 ### Our own artifacts [binary] [container]
 
 Verified by loading each artifact's requirements against six real distribution
@@ -376,6 +404,8 @@ dies and the application it started stays up.
   its own Qt could load a second copy. Verified working with system Qt; the fix
   is Qat's own approach — no Qt dependency, detect the version, `dlopen` a
   matched build.
-- **The gate against a real launch script.** The two failures in §5 were
-  measured on a live VM; the gate that answers them is built and tested here,
-  but has not yet recorded that application end to end.
+- **A recording of an application started by a launch script, end to end.** The
+  gate in §5 is confirmed live: against `start_spine.sh` every `cd: $'Loading
+  injector...'` disappeared and the injector reached the application, which is
+  what the glibc finding in §3 was then measured from. Nothing has yet recorded
+  a step in such an application.

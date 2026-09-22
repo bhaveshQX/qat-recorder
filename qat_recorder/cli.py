@@ -199,7 +199,12 @@ def _cmd_record(args) -> int:
     # The gate decides which processes get the injector. Without it, an
     # application started by a launch script never starts at all: see
     # native/qatgate.c.
-    from qat_recorder.launch import close, gate_env, start
+    from qat_recorder.launch import close, gate_env, qt_mismatch, start
+
+    warning = qt_mismatch(args.app, args.lib)
+    if warning:
+        print(warning, file=sys.stderr)
+
     gate = gate_env(args.app, args.lib)
     if gate:
         os.environ["QATREC_GATE"] = gate
@@ -452,6 +457,55 @@ def _cmd_build_filter(args) -> int:
     return 0
 
 
+def _cmd_qat_servers(args) -> int:
+    """Report -- and optionally repair -- Qat's prebuilt server libraries.
+
+    The failure this exists for is silent in every log but the application's
+    own: injection reaches the application, finds its Qt, and then cannot load
+    the server built for that Qt because it needs a newer glibc than this
+    machine has. See qat_recorder/servers.py.
+    """
+    from qat_recorder import servers
+
+    folder = servers.qat_bin_dir()
+    if folder is None:
+        print("qat is not installed in this environment", file=sys.stderr)
+        return 2
+
+    if args.restore:
+        restored = servers.restore(folder)
+        if not restored:
+            print("nothing to restore: no originals are being kept")
+            return 0
+        for path in restored:
+            print(f"restored {path}")
+        return 0
+
+    print(servers.report(folder))
+
+    if not args.fix:
+        return 0
+
+    machine = servers.Machine.here()
+    plan = servers.repairs(servers.survey(folder), machine)
+    if not plan:
+        return 0
+    try:
+        done = servers.apply_repairs(plan)
+    except OSError as error:
+        print(f"\ncould not write to {folder}: {error}", file=sys.stderr)
+        print("the environment may be read-only, or owned by another user",
+              file=sys.stderr)
+        return 1
+    print()
+    for target, standin in done:
+        print(f"{target.name} <- {standin.name}  "
+              f"(original kept as {target.name}{servers.BACKUP_SUFFIX})")
+    print("\nRecord again; the injection should now get past "
+          '"Failed to load Qat server".')
+    return 0
+
+
 def _cmd_hosts(args) -> int:
     from qat_recorder.agent.registry import Host, Registry, client_for
 
@@ -689,6 +743,17 @@ def build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument("--verbose", action="store_true",
                               help="show full compiler output")
     build_parser.set_defaults(func=_cmd_build_filter)
+
+    servers_parser = sub.add_parser(
+        "qat-servers",
+        help="check Qat's prebuilt servers against this machine, and repair them")
+    servers_parser.add_argument(
+        "--fix", action="store_true",
+        help="stand a server that loads here in for one that does not")
+    servers_parser.add_argument(
+        "--restore", action="store_true",
+        help="undo --fix, putting every original back")
+    servers_parser.set_defaults(func=_cmd_qat_servers)
 
     hosts_parser = sub.add_parser(
         "hosts", help="manage the list of VMs you can record on")

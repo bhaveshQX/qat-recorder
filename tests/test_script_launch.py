@@ -411,6 +411,28 @@ def test_the_application_is_closed_before_the_script_that_started_it(tmp_path):
     assert log == [("kill", 205, signal.SIGTERM), ("close", 100)]
 
 
+def test_a_launch_that_fails_does_not_leave_the_application_running(tmp_path):
+    """Observed live: the first attempt timed out, the application it had
+    started stayed up, and the second attempt started a second copy. Neither
+    was being recorded."""
+    folder = tmp_path / "temp"
+    folder.mkdir()
+    log = []
+    context = FakeContext(pid=100)
+    context.kill = lambda: log.append(("kill", 100, "context"))
+    clock, tick = fake_time()
+
+    with pytest.raises(launch.LaunchError):
+        launch.start(FakeQat(context, log=log), "app",
+                     app_path=script(tmp_path), folder=folder, timeout_ms=500,
+                     parent={205: 100, 206: 205}.get, listing=[100, 205, 206],
+                     sleep=tick, clock=clock, kill=FakeKiller(log))
+
+    killed = [entry for entry in log if entry[0] == "kill"]
+    # The application and the daemon it started, then the launcher itself.
+    assert [entry[1] for entry in killed] == [206, 205, 100]
+
+
 def test_closing_an_ordinary_application_is_just_closing_it():
     log = []
     context = FakeContext(pid=100)
@@ -466,6 +488,79 @@ def test_the_generated_test_launches_the_same_way_the_recording_did():
     # Still runnable where the recorder is not installed beside the test.
     assert "except ImportError:" in source
     compile(source, "generated.py", "exec")
+
+
+# --- the Qt the application actually loads ----------------------------------
+
+def bundled_app(tmp_path, soname="libQt6Core.so.6"):
+    """An application laid out the way a product that ships its own Qt is:
+    `bin/start_app.sh` with `lib/Qt/lib/libQt6Core.so.6` beside it."""
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "lib" / "Qt" / "lib").mkdir(parents=True)
+    (tmp_path / "lib" / "Qt" / "lib" / soname).write_bytes(b"not really Qt")
+    app = tmp_path / "bin" / "start_app.sh"
+    app.write_text("#!/bin/sh\nexec ./app\n", encoding="utf-8")
+    return str(app)
+
+
+def test_the_qt_an_application_carries_is_found_beside_it(tmp_path):
+    assert launch.bundled_qt_majors(bundled_app(tmp_path)) == {6}
+
+
+def test_an_application_that_carries_nothing_has_no_opinion(tmp_path):
+    assert launch.bundled_qt_majors(script(tmp_path)) == set()
+
+
+def test_the_search_does_not_leave_the_products_own_tree(tmp_path):
+    """`/usr/bin/app` has `/usr` above it. Searching that for a bundled Qt is
+    wrong and slow, and it cost this function a test run that never finished
+    before the guard existed."""
+    assert launch._bundle_roots(Path("/usr/bin")) == []
+    assert launch._bundle_roots(Path("/opt")) == []
+
+    (tmp_path / "bin").mkdir()
+    roots = launch._bundle_roots(tmp_path / "bin")
+    assert roots == [tmp_path / "bin", tmp_path]
+
+
+def test_an_application_not_in_a_bin_directory_looks_no_higher(tmp_path):
+    """Only the bin/ layout says the directory above is the same product."""
+    (tmp_path / "product").mkdir()
+    (tmp_path / "libQt6Core.so.6").write_bytes(b"somebody else's Qt")
+    app = tmp_path / "product" / "app.sh"
+    app.write_text("#!/bin/sh\n", encoding="utf-8")
+    assert launch.bundled_qt_majors(str(app)) == set()
+
+
+def test_an_application_that_does_not_exist_is_not_searched_for(tmp_path):
+    """Path("").resolve() is the working directory; walking it is how a test
+    run went from two seconds to never finishing."""
+    assert launch.bundled_qt_majors("") == set()
+    assert launch.bundled_qt_majors(str(tmp_path / "missing")) == set()
+
+
+def test_a_filter_built_for_the_wrong_qt_is_reported_before_recording(tmp_path):
+    """It loads without complaining and then sees none of the application's
+    widgets -- a session where nothing is recorded and nothing says why."""
+    app = bundled_app(tmp_path)
+    warning = launch.qt_mismatch(app, "/home/x/qatrec-filter/libqatrec.5.15.so")
+    assert "built against Qt 5" in warning
+    assert "Qt 6" in warning
+    assert "build-filter" in warning
+
+
+def test_a_matching_filter_says_nothing(tmp_path):
+    app = bundled_app(tmp_path)
+    assert launch.qt_mismatch(app, "/x/libqatrec.6.2.so") == ""
+    # Binary compatibility is within a major version, so 6.2 against 6.8 is
+    # fine and only the major is compared.
+    assert launch.qt_mismatch(app, "/x/libqatrec.6.8.so") == ""
+
+
+def test_nothing_is_claimed_when_nothing_is_known(tmp_path):
+    assert launch.qt_mismatch(script(tmp_path), "/x/libqatrec.5.15.so") == ""
+    assert launch.qt_mismatch(bundled_app(tmp_path), "") == ""
+    assert launch.qt_mismatch("", "/x/libqatrec.5.15.so") == ""
 
 
 # --- finding the gate -------------------------------------------------------

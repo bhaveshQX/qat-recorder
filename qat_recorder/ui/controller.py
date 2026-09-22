@@ -197,6 +197,13 @@ class RecorderController:
         except AttributeError:
             pass
 
+        # Said before the application starts, because afterwards it looks like
+        # an application that produces no events rather than a filter that
+        # cannot see any.
+        warning = launch.qt_mismatch(self.app_path, self.lib_path)
+        if warning:
+            self._report(warning)
+
         self.qat.register_application(self.registered_name, self.wrapper, "")
         # Not qat.start_application(): a launch script starts the application
         # as a child, and Qat waits for a port file under the pid of the

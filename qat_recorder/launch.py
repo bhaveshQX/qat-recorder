@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
 import signal
 import tempfile
 import time
@@ -197,6 +198,127 @@ def gate_env(app_path, lib_path) -> Optional[str]:
     return gate_for(lib_path)
 
 
+#: How deep to look beside an application for the Qt it carries with it.
+#: `bin/spine` with `lib/Qt/lib/libQt6Core.so.6` is four levels from the binary;
+#: anything deeper than that is somebody else's tree.
+BUNDLE_DEPTH = 5
+
+
+def bundled_qt_majors(app_path, depth: int = BUNDLE_DEPTH) -> set:
+    """Which Qt an application will load, judged from the files beside it.
+
+    An application that ships its own Qt is the case that matters: the Qt it
+    runs has nothing to do with the Qt this machine has, so the filter built
+    from this machine's headers can be the wrong major version entirely --
+    which produces a recording where nothing is ever recorded, and no error
+    anywhere saying why.
+
+    Empty when nothing was found, which means "no opinion", not "no Qt".
+    """
+    # An application we cannot see is not an application to look beside. Left
+    # out, `Path("").resolve()` is the working directory and this walks the
+    # tree the recorder happens to have been started in.
+    if not app_path:
+        return set()
+    try:
+        application = Path(app_path).resolve()
+        if not application.exists():
+            return set()
+        start = application.parent
+    except OSError:                                   # pragma: no cover
+        return set()
+
+    found = set()
+    for base in _bundle_roots(start):
+        for major, name in ((5, "libQt5Core.so.5"), (6, "libQt6Core.so.6")):
+            if major in found:
+                continue
+            if _find_within(base, name, depth):
+                found.add(major)
+    return found
+
+
+#: Directories that are not one product's tree. `/usr/bin/app` has `/usr` above
+#: it, and searching /usr for a bundled Qt is both wrong and slow.
+SYSTEM_ROOTS = frozenset((
+    "/", "/usr", "/usr/local", "/opt", "/bin", "/sbin", "/lib", "/lib64",
+    "/home", "/var", "/tmp", "/srv", "/etc", "/snap",
+))
+
+
+def _bundle_roots(start: Path) -> list:
+    """Where an application's own Qt could be, and nowhere else.
+
+    The directory the application is in, plus the one above it when the
+    application sits in a `bin/` -- the layout every self-contained product
+    uses, and the one that puts `lib/Qt/lib` a level up from the executable.
+    """
+    roots = [start] if start.is_dir() else []
+    above = start.parent
+    if (start.name in ("bin", "sbin", "lib", "lib64")
+            and above != start
+            and above.is_dir()
+            and above.as_posix() not in SYSTEM_ROOTS):
+        roots.append(above)
+    return roots
+
+
+#: A ceiling on the search, so a product that ships ten thousand files costs a
+#: bounded amount of time before a recording rather than an unbounded one.
+BUNDLE_BUDGET = 2000
+
+
+def _find_within(base: Path, name: str, depth: int,
+                 budget: int = BUNDLE_BUDGET) -> bool:
+    """`name` anywhere under `base`, no deeper than `depth`."""
+    roots = [(base, 0)]
+    while roots and budget > 0:
+        budget -= 1
+        folder, level = roots.pop()
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_file() or entry.is_symlink():
+                    if entry.name == name:
+                        return True
+                elif entry.is_dir() and level < depth:
+                    roots.append((entry, level + 1))
+            except OSError:                           # pragma: no cover
+                continue
+    return False
+
+
+def filter_qt_major(lib_path) -> Optional[int]:
+    """The Qt major the filter was built against, from its name."""
+    match = re.match(r"^libqatrec\.(\d+)\.", Path(lib_path).name) if lib_path \
+        else None
+    return int(match.group(1)) if match else None
+
+
+def qt_mismatch(app_path, lib_path) -> str:
+    """A warning when the filter cannot possibly see this application's widgets.
+
+    A warning and not a refusal: this is read off a directory listing, and a
+    guess is not allowed to stop somebody recording.
+    """
+    major = filter_qt_major(lib_path)
+    if major is None:
+        return ""
+    majors = bundled_qt_majors(app_path)
+    if not majors or major in majors:
+        return ""
+    carries = " and ".join(f"Qt {one}" for one in sorted(majors))
+    return (f"{Path(lib_path).name} was built against Qt {major}, but "
+            f"{Path(app_path).name} carries {carries} beside it. A filter "
+            "built against the wrong major version loads without complaining "
+            "and then sees none of the application's widgets. Install the "
+            f"matching development package (qt{min(majors)}-base-dev | "
+            f"qt{min(majors)}-qtbase-devel) and rebuild with `build-filter`.")
+
+
 def discover_gate(lib_path=None) -> Optional[str]:
     """The gate, from the obvious places, for code that was not told where.
 
@@ -227,7 +349,8 @@ def _supports_detached(function) -> bool:
 def start(qat_module, name: str, *, app_path=None, follow: Optional[bool] = None,
           timeout_ms: Optional[int] = None, folder=None,
           parent: Callable = parent_of, sleep: Callable = time.sleep,
-          clock: Callable = time.monotonic):
+          clock: Callable = time.monotonic, kill: Optional[Callable] = None,
+          listing=None):
     """Start the registered application `name` and return a connected context.
 
     `follow` decides whether to expect the application to be a child of what we
@@ -266,16 +389,71 @@ def start(qat_module, name: str, *, app_path=None, follow: Optional[bool] = None
                                 qat_module=qat_module)
 
         if _has_exited(context):
+            # The launcher is gone, but a script that dies does not take the
+            # daemons it started with it.
+            abandon(context, sleep=sleep, clock=clock, kill=kill,
+                    listing=listing, parent=parent)
             raise LaunchError(_died_message(context, name, app_path))
         if clock() >= deadline:
+            # Everything we started, before saying so. A launch that fails and
+            # leaves the application up means the next attempt runs against a
+            # machine that already has one open -- observed as two copies of
+            # the same application, neither of them being recorded.
+            abandon(context, sleep=sleep, clock=clock, kill=kill,
+                    listing=listing, parent=parent)
             raise LaunchError(
                 f"{name} did not report a port within {timeout:.0f}s. The "
                 f"process started (pid {launched}) and is still running, but "
                 "neither it nor any process it started announced a Qat server. "
                 "Either the application has not finished starting, or the "
                 "injector never reached it -- run with QATREC_GATE_DEBUG=1 to "
-                "see which processes the gate instrumented.")
+                "see which processes the gate instrumented."
+                + server_hint())
         sleep(POLL_SECONDS)
+
+
+def children_of(pid: int, listing=None, parent: Callable = parent_of) -> list:
+    """Every process descended from `pid`, deepest last.
+
+    /proc is walked rather than remembered: the application we want is started
+    by a script we did not write, and the only record of what it started is the
+    process table.
+    """
+    if listing is None:
+        try:
+            listing = [int(entry) for entry in os.listdir("/proc")
+                       if entry.isdigit()]
+        except OSError:                                # pragma: no cover
+            return []
+    found = [other for other in sorted(listing)
+             if other != pid and descends_from(other, pid, parent=parent)]
+    return found
+
+
+def abandon(context, *, sleep: Callable = time.sleep,
+            clock: Callable = time.monotonic, grace: float = 2.0,
+            kill: Optional[Callable] = None, listing=None,
+            parent: Callable = parent_of) -> None:
+    """Stop everything a failed launch started, quietly.
+
+    Best effort by definition -- we are already reporting a failure and have
+    nothing to gain by failing differently while cleaning up.
+    """
+    launched = getattr(context, "pid", None)
+    if not launched or launched <= 0:
+        return
+    for pid in reversed(children_of(launched, listing=listing, parent=parent)):
+        try:
+            _stop(pid, sleep=sleep, clock=clock, grace=grace, kill=kill)
+        except Exception:                              # noqa: BLE001
+            pass
+    try:
+        context.kill()
+    except Exception:                                  # noqa: BLE001
+        try:
+            _stop(launched, sleep=sleep, clock=clock, grace=grace, kill=kill)
+        except Exception:                              # noqa: BLE001
+            pass
 
 
 def _mtime(path) -> float:
@@ -306,7 +484,35 @@ def _died_message(context, name, app_path) -> str:
             f"\n{app_path} is a launch script, so its own output is the place "
             "to look: a script that cannot find its files usually cannot find "
             "them when run by hand either.")
-    return message
+    return message + server_hint()
+
+
+def server_hint() -> str:
+    """The other reason no port file ever appears, named where it is noticed.
+
+    Injection can reach the application, find its Qt and still fail, because
+    the server Qat ships for that Qt version was built on a newer distribution
+    than this one. From here that is indistinguishable from a timeout -- the
+    only evidence is a line in the application's own output -- so the timeout
+    says it out loud instead of leaving it to be discovered.
+    """
+    try:
+        from qat_recorder import servers  # noqa: PLC0415
+
+        folder = servers.qat_bin_dir()
+        if folder is None:
+            return ""
+        plan = servers.repairs(servers.survey(folder), servers.Machine.here())
+    except Exception:                                 # noqa: BLE001
+        return ""
+    if not plan:
+        return ""
+    names = ", ".join(sorted(path.name for path in plan))
+    return ("\n\nNote: this machine cannot load " + names + " -- they need a "
+            "newer glibc than it has. An application built against that Qt "
+            "version will start normally and never answer Qat. Run "
+            "`python -m qat_recorder qat-servers` for the detail, or "
+            "`--fix` to stand a loadable server in for it.")
 
 
 def _connect(context, port_file, app_pid: int, sleep: Callable = time.sleep,

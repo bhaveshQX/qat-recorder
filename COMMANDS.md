@@ -65,6 +65,25 @@ cd ~/Downloads
 ~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter
 ```
 
+## VM — when the application starts but never answers
+
+Qat ships one prebuilt server per Qt version, and the Qt 6.8+ ones need a newer
+glibc than Ubuntu 22.04 or RHEL 9 has. The application then starts perfectly and
+is never reachable, and the only sign is a line in its own output:
+
+```
+Failed to load Qat server: .../libQatServer.6.8.so
+/lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
+```
+
+`install.sh vm` repairs this automatically. To check or repair it by hand:
+
+```bash
+~/qatrec/bin/python -m qat_recorder qat-servers          # what needs what
+~/qatrec/bin/python -m qat_recorder qat-servers --fix    # stand in one that loads
+~/qatrec/bin/python -m qat_recorder qat-servers --restore
+```
+
 ## VM — remove everything
 
 ```bash

@@ -283,6 +283,14 @@ cmd_vm() {
         LIB=""
     fi
 
+    # Qat ships one prebuilt server per Qt minor version, and the Qt 6.8+ ones
+    # were built on a newer distribution than this may be. An application built
+    # against that Qt starts normally and never answers Qat, with the only
+    # evidence in the application's own output. Checked and repaired here so it
+    # is never discovered the hard way; originals are kept.
+    step "Qat server libraries"
+    "$PREFIX/bin/python" -m qat_recorder qat-servers --fix 2>&1 | sed 's/^/  /'
+
     [ "$WITH_AGENT" -eq 1 ] && setup_agent
 
     step "Done"
