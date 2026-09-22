@@ -75,11 +75,18 @@ class Player:
         qat = self.qat
 
         if action.kind is ActionKind.LAUNCH:
+            from qat_recorder import launch  # noqa: PLC0415
+
             name = action.args.get("app") or (recording.app if recording else None)
-            self.context = qat.start_application(name)
+            # The application has to come up the same way it did while being
+            # recorded, launch script and all -- see qat_recorder/launch.py.
+            app_path = recording.meta.get("app_path") if recording else None
+            self.context = launch.start(qat, name, app_path=app_path)
             return
         if action.kind is ActionKind.CLOSE:
-            qat.close_application(self.context)
+            from qat_recorder import launch  # noqa: PLC0415
+
+            launch.close(qat, self.context)
             self.context = None
             return
         if action.kind is ActionKind.SCREENSHOT:

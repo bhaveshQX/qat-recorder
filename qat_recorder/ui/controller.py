@@ -24,6 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from qat_recorder import launch
 from qat_recorder.capture import CaptureSession
 from qat_recorder.events import RawEvent
 from qat_recorder.ir import Action, ActionKind, Recording, Robustness
@@ -177,6 +178,17 @@ class RecorderController:
         os.environ["QATREC_LIB"] = self.lib_path
         os.environ["QATREC_APP"] = self.app_path
 
+        # The gate decides which processes in the tree get Qat's injector. It
+        # is what makes an application that is started by a launch script
+        # recordable at all -- without it the injector goes into every shell
+        # the script runs and its output poisons the script's own command
+        # substitutions. native/qatgate.c has the whole story.
+        gate = launch.gate_env(self.app_path, self.lib_path)
+        if gate:
+            os.environ["QATREC_GATE"] = gate
+        else:
+            os.environ.pop("QATREC_GATE", None)
+
         # Qat locks the application's UI during a test run so stray input cannot
         # corrupt it. While recording that is exactly backwards -- it would block
         # the input being captured.
@@ -186,7 +198,12 @@ class RecorderController:
             pass
 
         self.qat.register_application(self.registered_name, self.wrapper, "")
-        self.context = self.qat.start_application(self.registered_name)
+        # Not qat.start_application(): a launch script starts the application
+        # as a child, and Qat waits for a port file under the pid of the
+        # script. `launch.start` follows the application into the process that
+        # actually came up. For a binary it is Qat's own path, unchanged.
+        self.context = launch.start(self.qat, self.registered_name,
+                                    app_path=self.app_path)
 
         if self._backend is None:
             from qat_recorder.backend import QatBackend  # noqa: PLC0415
@@ -233,7 +250,9 @@ class RecorderController:
             self._receiver.stop()
         try:
             if self.context is not None:
-                self.qat.close_application(self.context)
+                # The application first, then the script that started it: the
+                # other order leaves the application running.
+                launch.close(self.qat, self.context)
         except Exception as error:                            # noqa: BLE001
             self._report(f"could not close the application: {error}")
         finally:

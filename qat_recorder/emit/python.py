@@ -130,6 +130,52 @@ def override(name, definition):
     return OVERRIDES.get(name, definition)
 '''
 
+#: Starting the application, which is not always the same thing as starting what
+#: the recording was pointed at.
+#:
+#: A launch script sets up an environment, starts whatever daemons the product
+#: needs and then runs the real binary as a CHILD. Qat waits for the process it
+#: started to announce a port; the child announces it under its own pid, so a
+#: test that registers the script directly gives up before its first step:
+#:
+#:     Abort: app terminated
+#:
+#: The recorder followed the application into that child while recording, and a
+#: replay has to do the same or the test can never pass on the machine it was
+#: recorded on. Where qat_recorder is not installed beside the test, a plain
+#: launch is exactly right for a binary and is the only thing available anyway.
+LAUNCH_HELPER = '''
+
+def launch_application(name, path):
+    """Start the application the way the recording started it."""
+    try:
+        from qat_recorder import launch
+    except ImportError:
+        if name not in qat.list_applications():
+            qat.register_application(name, path)
+        return qat.start_application(name)
+
+    if path and launch.is_script(path):
+        # Registered every time, not only when missing: a script has to be
+        # launched through the recorder's wrapper, and a registration pointing
+        # straight at it is the failure this function exists to prevent.
+        launch.register_for_replay(qat, name, path)
+    elif name not in qat.list_applications():
+        launch.register_for_replay(qat, name, path)
+    return launch.start(qat, name, app_path=path)
+
+
+def close_application(context):
+    """Close the application, and whatever started it."""
+    try:
+        from qat_recorder import launch
+    except ImportError:
+        qat.close_application(context)
+        return
+    launch.close(qat, context)
+
+'''
+
 #: Added only when the recording touches a row of a list, tree or table. Qat
 #: addresses items by row number, which is wrong the moment a row is inserted
 #: above the one that matters. The text is what the person recognised, so the
@@ -628,6 +674,8 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     definitions = [action.target.definition for action in recording.actions
                    if action.target is not None]
     out.append(OVERRIDE_HELPER)
+    if recording.meta.get("app_path"):
+        out.append(LAUNCH_HELPER)
     if any(is_menu_item(definition) for definition in definitions):
         out.append(MENU_HELPER)
     items = [action for action in recording.actions
@@ -652,14 +700,12 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     out.append("")
     out.append("@pytest.fixture()")
     out.append("def application():")
-    if app_path:
-        # Register it here rather than expecting the operator to have done so.
-        # `start_application` takes a registered NAME, so a test that only knows
-        # the name fails with "Application '...' is not defined in configuration
-        # file 'applications.json'" on any machine where it was not registered
-        # first -- which is every machine except the one it was recorded on.
-        out.append("    if APP_NAME not in qat.list_applications():")
-        out.append("        qat.register_application(APP_NAME, APP_PATH)")
+    # Registering is done by launch_application() rather than here, because a
+    # launch script and a binary do not need the same registration -- and
+    # because `start_application` takes a registered NAME, so a test that only
+    # knows the name fails with "Application '...' is not defined in
+    # configuration file 'applications.json'" on every machine except the one it
+    # was recorded on.
     out.append("    qat.Settings.wait_for_object_timeout = TIMEOUT_MS")
     out.append("    # The same condition the session was recorded under: Qt's")
     out.append("    # own file dialogs rather than the desktop's. A native")
@@ -675,11 +721,17 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     out.append("    if APP_PATH:")
     out.append("        os.chdir(os.path.dirname(os.path.abspath(APP_PATH)))")
     out.append("    try:")
-    out.append("        context = qat.start_application(APP_NAME)")
+    if app_path:
+        out.append("        context = launch_application(APP_NAME, APP_PATH)")
+    else:
+        out.append("        context = qat.start_application(APP_NAME)")
     out.append("    finally:")
     out.append("        os.chdir(_was)")
     out.append("    yield context")
-    out.append("    qat.close_application(context)")
+    if app_path:
+        out.append("    close_application(context)")
+    else:
+        out.append("    qat.close_application(context)")
     out.append("")
     checks = _preconditions(items, constants)
     out.extend(checks)

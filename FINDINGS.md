@@ -312,7 +312,56 @@ press names the item and its release is dropped — unless the release names a
 
 ---
 
-## 5. What remains unverified
+## 5. Applications that are started by a launch script
+
+Two independent failures, both observed against a real product whose launcher is
+`start_spine.sh`: a `/bin/sh` script that exports the environment, starts four
+DICOM helper daemons and then runs `./spine`.
+
+**Qat's injector writes to stdout in every process that inherits LD_PRELOAD**
+[live]
+
+Qat launches by setting `LD_PRELOAD` to its injector (`app_launcher.py:549`).
+Every descendant inherits it, and in each one the injector prints `Loading
+injector`, `Detected Qt version 5.15.3`, `Waiting for Qt libraries to be loaded
+before injecting server`. Harmless until a shell script uses a command
+substitution, which captures stdout:
+
+    start_spine.sh: line 31: cd: $'Loading injector
+Detected Qt version...'
+    ./start_storescp_carm_ge.sh: 1: cd: can't cd to Loading injector
+    ./start_storescp_carm_ge.sh: 105: exec: ./storescp_carm_ge: not found
+
+Nothing the script owns is where it expects it, and the application never
+starts. There is no environment variable that silences the injector -- its
+strings are in `libinjector.so` and no `getenv` guards them [binary].
+
+The fix is to stop preloading the injector everywhere: `native/qatgate.c` is
+preloaded instead and loads the injector only in the process Qat launched and in
+any descendant that already has Qt mapped. Shells, `dirname` and `sed` get a
+library that reads two environment variables and returns. It is used only for an
+application that is a script; a binary keeps the injector in its own
+`LD_PRELOAD`, exactly as before.
+
+**Qat waits for a port file named after the process it launched** [source]
+
+`create_qat_config_file_path(context.pid)` -> `$TEMP/qat-<pid>.txt`, where the
+pid is the process Qat started. The injected server writes that file from
+whatever process it ended up in. For a binary they are the same process; for a
+launch script that runs the application as a child they are not, so Qat waits
+for a file nobody will write until:
+
+    Abort: app terminated
+
+`qat_recorder/launch.py` launches such an application detached, watches the
+folder for the port file that actually appears, checks that the process which
+wrote it descends from the one we started, and points the context at it. Closing
+the session then has to stop the application before the script, or the script
+dies and the application it started stays up.
+
+---
+
+## 6. What remains unverified
 
 - **`createWindowContainer` for QML.** The highest-value outstanding experiment
   if applications embed QML via `QQuickWidget`.
@@ -327,3 +376,6 @@ press names the item and its release is dropped — unless the release names a
   its own Qt could load a second copy. Verified working with system Qt; the fix
   is Qat's own approach — no Qt dependency, detect the version, `dlopen` a
   matched build.
+- **The gate against a real launch script.** The two failures in §5 were
+  measured on a live VM; the gate that answers them is built and tested here,
+  but has not yet recorded that application end to end.

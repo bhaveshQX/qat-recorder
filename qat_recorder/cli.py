@@ -28,11 +28,16 @@ def _cmd_audit(args) -> int:
     from qat_recorder.backend import QatBackend
     from qat_recorder.ir import Robustness
 
+    from qat_recorder import launch
+
     temporary = False
     app_name = args.app
     if args.launch:
         app_name = "_qat_recorder_audit"
-        qat.register_application(app_name, args.launch, " ".join(args.args))
+        # Through the recorder's launcher, because --launch may well be a shell
+        # script: see qat_recorder/launch.py for what that costs otherwise.
+        launch.register_for_replay(qat, app_name, args.launch,
+                                   args=" ".join(args.args))
         temporary = True
 
     # Qat locks the application's UI when it starts a session, so that stray
@@ -44,7 +49,7 @@ def _cmd_audit(args) -> int:
     except AttributeError:
         pass
 
-    context = qat.start_application(app_name)
+    context = launch.start(qat, app_name, app_path=args.launch)
     try:
         if args.pause:
             print("\nApplication is running and responsive. Navigate to the "
@@ -58,7 +63,7 @@ def _cmd_audit(args) -> int:
         print(report.render())
     finally:
         try:
-            qat.close_application(context)
+            launch.close(qat, context)
         finally:
             if temporary:
                 qat.unregister_application(app_name)
@@ -191,6 +196,16 @@ def _cmd_record(args) -> int:
     os.environ["QATREC_LIB"] = args.lib
     os.environ["QATREC_APP"] = args.app
 
+    # The gate decides which processes get the injector. Without it, an
+    # application started by a launch script never starts at all: see
+    # native/qatgate.c.
+    from qat_recorder.launch import close, gate_env, start
+    gate = gate_env(args.app, args.lib)
+    if gate:
+        os.environ["QATREC_GATE"] = gate
+    else:
+        os.environ.pop("QATREC_GATE", None)
+
     # Qat locks the application's UI during a test run so stray input cannot
     # corrupt it. While recording that is backwards -- it would block the very
     # input being captured.
@@ -198,7 +213,10 @@ def _cmd_record(args) -> int:
 
     name = "_qat_recorder_session"
     qat.register_application(name, str(wrapper), "")
-    context = qat.start_application(name)
+    # Not qat.start_application: when the application is started by a launch
+    # script it is a child of the process Qat launched, and Qat waits on the
+    # wrong pid -- "Abort: app terminated" before anything was recorded.
+    context = start(qat, name, app_path=args.app)
     print(f"recording for {args.seconds}s -- interact with the application now")
 
     # The name identifies the application in generated code; the path lets that
@@ -216,7 +234,10 @@ def _cmd_record(args) -> int:
     finally:
         receiver.stop()
         try:
-            qat.close_application(context)
+            # close(), not qat.close_application(): where the application was
+            # started by a script, Qat owns the script and closing it would
+            # leave the application running.
+            close(qat, context)
         finally:
             qat.unregister_application(name)
 
@@ -408,7 +429,7 @@ def _cmd_emit(args) -> int:
 
 def _cmd_build_filter(args) -> int:
     """Compile the event filter from the source shipped inside this package."""
-    from qat_recorder.native import BuildError, build, source_dir
+    from qat_recorder.native import BuildError, build, gate_of, source_dir
 
     try:
         print(f"source: {source_dir()}")
@@ -419,6 +440,12 @@ def _cmd_build_filter(args) -> int:
         return 1
 
     print(f"\nbuilt: {library}")
+    gate = gate_of(library)
+    if gate:
+        # Nothing to pass on the command line: it is found beside the filter.
+        # Printed because an application started by a launch script does not
+        # record without it.
+        print(f"       {gate}  (used automatically)")
     print("\nrecord with it:")
     print(f"  python -m qat_recorder record --lib {library} \\")
     print("      --app /path/to/your/app --seconds 60 --out ./recorded")

@@ -11,7 +11,37 @@
 # Qat registers THIS script as the application; QATREC_LIB points at the filter
 # and QATREC_APP at the real binary. Both are set by the recorder.
 
-if [ -n "${QATREC_LIB:-}" ]; then
+# Who gets the injector, and who is left completely alone.
+#
+# LD_PRELOAD is inherited by every process the application starts. When the
+# application is a launch script that is every shell, dirname and sed in it --
+# and Qat's injector announces itself on stdout in each one, so a script line
+# like `cd $(dirname "$0")/..` changes into a directory called "Loading
+# injector...". The gate is preloaded instead and loads the injector only where
+# it belongs; qatgate.c explains it in full.
+#
+# Without a gate library -- an older filter build, or a machine where only the
+# filter was compiled -- the original behaviour, which is correct for an
+# application launched directly rather than through a script.
+USE_GATE=0
+if [ -n "${QATREC_GATE:-}" ] && [ -f "${QATREC_GATE}" ]; then
+    USE_GATE=1
+fi
+if [ "${QATREC_NO_GATE:-0}" = "1" ]; then
+    USE_GATE=0
+fi
+
+if [ "${USE_GATE}" = "1" ]; then
+    QATREC_PRELOAD="${LD_PRELOAD:-}"
+    if [ -n "${QATREC_LIB:-}" ]; then
+        QATREC_PRELOAD="${QATREC_PRELOAD:+${QATREC_PRELOAD}:}${QATREC_LIB}"
+    fi
+    export QATREC_PRELOAD
+    # $$ survives the `exec` below, so this stays the pid Qat is watching.
+    QATREC_PID=$$
+    export QATREC_PID
+    export LD_PRELOAD="${QATREC_GATE}"
+elif [ -n "${QATREC_LIB:-}" ]; then
     if [ -n "${LD_PRELOAD:-}" ]; then
         export LD_PRELOAD="${LD_PRELOAD}:${QATREC_LIB}"
     else

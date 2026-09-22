@@ -72,9 +72,26 @@ def obj(label):
 
 @given('the application "{{name}}" is running')
 def step_start_application(context, name):
-    if APP_PATH and name not in qat.list_applications():
-        qat.register_application(name, APP_PATH)
-    context.app = qat.start_application(name)
+    """Start it the way the recording started it.
+
+    A launch script is not the application: it starts the real binary as a
+    child, under a pid of its own, and Qat waits for the one it started -- so a
+    plain registration ends the run in "Abort: app terminated" before the first
+    step. qat_recorder.launch knows how to follow it; without it installed, a
+    plain launch is right for a binary and is all there is for a script.
+    """
+    try:
+        from qat_recorder import launch
+    except ImportError:
+        if APP_PATH and name not in qat.list_applications():
+            qat.register_application(name, APP_PATH)
+        context.app = qat.start_application(name)
+        return
+
+    if APP_PATH and (launch.is_script(APP_PATH)
+                     or name not in qat.list_applications()):
+        launch.register_for_replay(qat, name, APP_PATH)
+    context.app = launch.start(qat, name, app_path=APP_PATH)
 
 
 @when('I click "{{label}}"')

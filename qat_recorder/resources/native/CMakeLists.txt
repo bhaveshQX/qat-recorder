@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(qatrec LANGUAGES CXX)
+project(qatrec LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,20 @@ endif()
 set_target_properties(qatrec PROPERTIES
     OUTPUT_NAME "qatrec.${QT_VERSION_MAJOR}.${Qt${QT_VERSION_MAJOR}_VERSION_MINOR}"
 )
+
+# ---------------------------------------------------------------------------
+# The gate: which processes get instrumented at all.
+#
+# Preloaded in place of Qat's injector, it loads the injector and the filter in
+# the application and nowhere else -- see qatgate.c for what goes wrong when
+# every shell in a launch script gets them too. Deliberately no Qt and no C++:
+# it is preloaded into /bin/sh, dirname and sed as well, where it must cost
+# nothing and drag in nothing.
+# ---------------------------------------------------------------------------
+add_library(qatgate SHARED qatgate.c)
+target_link_libraries(qatgate PRIVATE ${CMAKE_DL_LIBS})
+target_compile_definitions(qatgate PRIVATE _GNU_SOURCE)
+target_compile_options(qatgate PRIVATE -Wall -Wextra -fvisibility=hidden)
 
 # ---------------------------------------------------------------------------
 # A minimal native Qt application to test the filter against. Native rather than

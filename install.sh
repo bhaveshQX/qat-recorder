@@ -274,6 +274,9 @@ cmd_vm() {
             > /tmp/qatrec-build.log 2>&1; then
         LIB=$(ls "$FILTER_DIR"/libqatrec*.so 2>/dev/null | head -1)
         ok "built $LIB"
+        # Built beside the filter and found automatically. It is what lets an
+        # application that is started by a launch script be recorded at all.
+        [ -f "$FILTER_DIR/libqatgate.so" ]             && ok "built $FILTER_DIR/libqatgate.so (launch-script support)"
     else
         warn "the filter did not build — see /tmp/qatrec-build.log"
         warn "audit and replay still work; recording needs the filter"
@@ -476,6 +479,11 @@ cmd_doctor() {
 
     local lib; lib=$(ls "$FILTER_DIR"/libqatrec*.so 2>/dev/null | head -1)
     [ -n "$lib" ] && ok "filter       $lib" || warn "no event filter built (recording will not work)"
+    if [ -f "$FILTER_DIR/libqatgate.so" ]; then
+        ok "gate         $FILTER_DIR/libqatgate.so"
+    else
+        warn "no gate built — an application started by a launch script will not record"
+    fi
 
     step "Tools"
     for tool in cmake c++ python3; do

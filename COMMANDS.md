@@ -26,7 +26,21 @@ bash install.sh vm --agent
 
 ```bash
 readlink -f ~/qatrec-filter/libqatrec*.so
-readlink -f "$(command -v qbittorrent)"
+readlink -f "$(command -v qbittorrent)"     # or the launch script: .../bin/start_spine.sh
+```
+
+## VM — applications started by a launch script
+
+Nothing extra to do: give the panel the script itself. `build-filter` also builds
+`~/qatrec-filter/libqatgate.so`, which the recorder picks up automatically; it is
+what keeps Qat's injector out of the shells the script runs (their `$(...)` lines
+break otherwise) and lets the recorder follow the application into the process the
+script actually starts.
+
+To see which processes were instrumented, start the agent with:
+
+```bash
+QATREC_GATE_DEBUG=1 ~/qatrec/bin/python -m qat_recorder.agent.cli ...
 ```
 
 ## VM — start the agent

@@ -41,7 +41,7 @@ def test_generated_python_compiles(recording):
 def test_generated_python_uses_qat_api(recording):
     source = emit_python(recording)
     assert "import qat" in source
-    assert "qat.start_application(APP_NAME)" in source
+    assert "qat.start_application(" in source
     assert "qat.mouse_click(" in source
     assert "qat.type_in(" in source
 
@@ -52,12 +52,18 @@ def test_generated_test_registers_the_application_itself(recording):
     Without registration the generated test fails on every machine except the
     one it was recorded on, with "Application '...' is not defined in
     configuration file 'applications.json'". Found on a real VM.
+
+    Registering moved into the generated `launch_application()` when launch
+    scripts arrived, because a script and a binary do not need the same
+    registration -- but it still happens, and it still happens in the generated
+    file rather than in somebody's memory.
     """
     source = emit_python(recording)
     assert "APP_NAME = 'sample'" in source
     assert "APP_PATH = '/opt/acme/sample'" in source
-    assert "if APP_NAME not in qat.list_applications():" in source
-    assert "qat.register_application(APP_NAME, APP_PATH)" in source
+    assert "context = launch_application(APP_NAME, APP_PATH)" in source
+    assert "if name not in qat.list_applications():" in source
+    assert "qat.register_application(name, path)" in source
     compile(source, "generated.py", "exec")
 
 

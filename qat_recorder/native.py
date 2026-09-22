@@ -82,6 +82,17 @@ def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
     return produced[0]
 
 
+def gate_of(library) -> Optional[Path]:
+    """The gate library built beside `library`, if this build produced one.
+
+    It is found by position rather than reported separately because everything
+    downstream -- the panel, the CLI, a generated test -- knows where the filter
+    is and nothing else. See `qat_recorder.launch.gate_for()`.
+    """
+    candidate = Path(library).resolve().parent / "libqatgate.so"
+    return candidate if candidate.exists() else None
+
+
 def _run(command: list, what: str, verbose: bool, hint: str = "") -> None:
     result = subprocess.run(command, capture_output=not verbose, text=True)
     if result.returncode == 0:
