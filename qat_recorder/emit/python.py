@@ -667,7 +667,17 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     out.append("    # one is open the application stops answering Qat at all.")
     out.append("    if os.environ.get('QATREC_NATIVE_DIALOGS') != '1':")
     out.append("        os.environ['QT_QPA_PLATFORMTHEME'] = ''")
-    out.append("    context = qat.start_application(APP_NAME)")
+    # Launch from the application's own directory, as the recording did.
+    # Only around the launch: Qat writes applications.json into the working
+    # directory, and that belongs beside the test rather than in somebody's
+    # application folder.
+    out.append("    _was = os.getcwd()")
+    out.append("    if APP_PATH:")
+    out.append("        os.chdir(os.path.dirname(os.path.abspath(APP_PATH)))")
+    out.append("    try:")
+    out.append("        context = qat.start_application(APP_NAME)")
+    out.append("    finally:")
+    out.append("        os.chdir(_was)")
     out.append("    yield context")
     out.append("    qat.close_application(context)")
     out.append("")

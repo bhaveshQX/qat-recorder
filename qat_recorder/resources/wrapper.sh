@@ -38,4 +38,14 @@ if [ "${QATREC_NATIVE_DIALOGS:-0}" != "1" ]; then
     export QT_QPA_PLATFORMTHEME=""
 fi
 
+# Start the application from its own directory.
+#
+# This is what a desktop launcher does and what a person does in a terminal, and
+# some applications require it: a launch script that calls its siblings as
+# ./start_storescp_pacs.sh and ./spine resolves those against the working
+# directory, not against itself, so started from anywhere else every one of them
+# is "No such file or directory". Inheriting the recorder's directory made the
+# application's success depend on where somebody happened to start the agent.
+cd "$(dirname "${QATREC_APP}")" || exit 1
+
 exec "${QATREC_APP}" "$@"
