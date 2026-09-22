@@ -88,6 +88,21 @@ def test_the_gate_instruments_anything_that_has_qt_loaded():
     assert "libQt6Core.so.6" in text
 
 
+def test_the_gate_never_instruments_a_shell():
+    """The recorder says so through QATREC_APP_IS_SCRIPT too, but the invariant
+    is worth holding where it cannot be forgotten. A shell has no Qt and
+    nothing to offer a recording -- and the injector's OnUnload, printed from a
+    destructor, lands in the script's own command substitutions."""
+    code = without_comments(gate_source())
+    assert "is_a_shell" in code
+    assert '"/proc/self/exe"' in code
+    for shell in ('"bash"', '"dash"', '"sh"'):
+        assert shell in code
+    # Qt present wins regardless; the pid rule is what a shell is excluded from.
+    assert ("if (!qt_is_loaded() && !(is_the_launched_process() "
+            "&& !is_a_shell()))") in code
+
+
 def test_the_gate_loads_what_the_wrapper_stashed():
     text = gate_source()
     assert 'getenv("QATREC_PRELOAD")' in text

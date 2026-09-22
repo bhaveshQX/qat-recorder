@@ -81,6 +81,45 @@ static int is_the_launched_process(void)
     return (long) getpid() == strtol(wanted, NULL, 10);
 }
 
+/* A shell is never the application, whatever it was asked to run.
+ *
+ * The pid rule below is for an application that IS the launched process, or an
+ * interpreter about to load Qt. When the launched process is a launch script,
+ * the launched process is a shell -- and injecting there does active harm,
+ * because the injector prints OnUnload from a destructor and a shell forks for
+ * every command substitution. A substitution made of builtins exits its fork
+ * without exec'ing, the destructor runs, and the script's own idea of where it
+ * lives comes back with OnUnload on the end of it.
+ *
+ * The recorder says so through QATREC_APP_IS_SCRIPT as well. This is here
+ * because an invariant worth holding is worth holding where it cannot be
+ * forgotten: a shell has no Qt, so it has nothing to offer a recording. */
+static int is_a_shell(void)
+{
+    static const char *const shells[] = {
+        "sh", "bash", "dash", "ksh", "mksh", "zsh", "ash", "busybox", NULL,
+    };
+    char path[512];
+    const char *name;
+    ssize_t length;
+    int index;
+
+    length = readlink("/proc/self/exe", path, sizeof path - 1);
+    if (length <= 0) {
+        return 0;
+    }
+    path[length] = '\0';
+
+    name = strrchr(path, '/');
+    name = (name != NULL) ? name + 1 : path;
+    for (index = 0; shells[index] != NULL; index++) {
+        if (strcmp(name, shells[index]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* RTLD_NOLOAD answers "is this already mapped?" without loading anything and
  * without touching the filesystem. By the time a preloaded constructor runs,
  * every library the executable links is mapped, so an application that links Qt
@@ -119,7 +158,7 @@ static void qatrec_gate(void)
         return;
     }
 
-    if (!is_the_launched_process() && !qt_is_loaded()) {
+    if (!qt_is_loaded() && !(is_the_launched_process() && !is_a_shell())) {
         if (debugging()) {
             say("no Qt here, loading nothing", NULL);
         }
