@@ -9,8 +9,23 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # against the OLDEST Qt in a major series stays binary compatible with every
 # later minor in that series -- which is what keeps the build matrix to two
 # artifacts instead of eleven.
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui)
+#
+# QATREC_QT_MAJOR overrides the choice. The newest Qt installed is nearly always
+# the one the application uses -- but an application that ships its own Qt has
+# nothing to do with what this machine has installed, and a filter built against
+# the wrong major version loads without complaining and then sees none of the
+# application's widgets. That one has to be said out loud rather than guessed.
+set(QATREC_QT_MAJOR "" CACHE STRING
+    "Qt major version to build against: 5, 6, or empty for the newest installed")
+
+if(QATREC_QT_MAJOR)
+    find_package(Qt${QATREC_QT_MAJOR} REQUIRED COMPONENTS Core Gui)
+    set(QT_VERSION_MAJOR ${QATREC_QT_MAJOR})
+else()
+    find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui)
+endif()
+message(STATUS "qatrec: building against Qt ${QT_VERSION_MAJOR}")
 
 add_library(qatrec SHARED qatrec.cpp)
 

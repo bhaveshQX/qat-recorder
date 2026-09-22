@@ -42,9 +42,39 @@ def check_prerequisites() -> list:
     return missing
 
 
+def discard_previous(build_path: Path) -> None:
+    """Clear what a previous build would otherwise decide for this one.
+
+    CMake caches which Qt it found. Installing qt6-base-dev and building again
+    in the same directory therefore builds against Qt 5 exactly as before, for
+    no visible reason -- and the stale `libqatrec.5.15.so` left beside the new
+    `libqatrec.6.2.so` sorts first, so even the path reported afterwards is the
+    wrong one. Both are somebody's afternoon, spent on nothing.
+
+    Configuring from scratch costs a couple of seconds. This is a build
+    directory for two source files; there is nothing in it worth keeping.
+    """
+    cache = build_path / "CMakeCache.txt"
+    if cache.exists():
+        cache.unlink()
+    shutil.rmtree(build_path / "CMakeFiles", ignore_errors=True)
+    stale = list(build_path.glob("libqatrec*.so"))
+    stale += list(build_path.glob("libqatgate.so"))
+    for path in stale:
+        try:
+            path.unlink()
+        except OSError:                              # pragma: no cover
+            pass
+
+
 def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
-          verbose: bool = False) -> Path:
-    """Configure and build the filter. Returns the path to the library."""
+          verbose: bool = False, qt_major: Optional[int] = None) -> Path:
+    """Configure and build the filter. Returns the path to the library.
+
+    `qt_major` forces which Qt to build against, for an application that ships
+    its own Qt and therefore has nothing to do with what this machine has
+    installed.
+    """
     missing = check_prerequisites()
     if missing:
         raise BuildError("missing build tools:\n  " + "\n  ".join(missing))
@@ -52,14 +82,18 @@ def build(out_dir: str, with_test_app: bool = False, jobs: Optional[int] = None,
     source = source_dir()
     build_path = Path(out_dir).expanduser().resolve()
     build_path.mkdir(parents=True, exist_ok=True)
+    discard_previous(build_path)
 
     configure = [
         "cmake", "-S", str(source), "-B", str(build_path),
         "-DCMAKE_BUILD_TYPE=Release",
         f"-DQATREC_BUILD_TEST_APP={'ON' if with_test_app else 'OFF'}",
     ]
+    if qt_major:
+        configure.append(f"-DQATREC_QT_MAJOR={qt_major}")
+    wanted = f"Qt {qt_major}" if qt_major else "Qt"
     _run(configure, "cmake configure", verbose,
-         hint="Qt development headers are usually what is missing here:\n"
+         hint=f"{wanted} development headers are usually what is missing here:\n"
               "  Qt 5: dnf install qt5-qtbase-devel   | apt install qtbase5-dev\n"
               "  Qt 6: dnf install qt6-qtbase-devel   | apt install qt6-base-dev")
 

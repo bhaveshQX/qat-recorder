@@ -65,6 +65,24 @@ cd ~/Downloads
 ~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter
 ```
 
+## VM — the filter has to match the application's Qt
+
+A filter built against the wrong major version loads without complaining and
+then sees none of the application's widgets: the session records nothing and
+says nothing. An application that ships its own Qt (a `lib/Qt/lib` beside its
+`bin/`) has nothing to do with the Qt this machine has installed.
+
+```bash
+sudo apt install qt6-base-dev         # RHEL: sudo dnf install qt6-qtbase-devel
+~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter --qt 6
+
+# or let the application decide:
+~/qatrec/bin/python -m qat_recorder build-filter --out ~/qatrec-filter     --app /path/to/start_app.sh
+```
+
+Then give the panel the `libqatrec.6.*.so` it built. Each build starts from
+scratch, so no stale library or cached Qt choice is left behind.
+
 ## VM — when the application starts but never answers
 
 Qat ships one prebuilt server per Qt version, and the Qt 6.8+ ones need a newer

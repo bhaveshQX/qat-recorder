@@ -434,12 +434,25 @@ def _cmd_emit(args) -> int:
 
 def _cmd_build_filter(args) -> int:
     """Compile the event filter from the source shipped inside this package."""
+    from qat_recorder.launch import bundled_qt_majors
     from qat_recorder.native import BuildError, build, gate_of, source_dir
+
+    qt_major = int(args.qt) if args.qt and args.qt != "auto" else None
+    if qt_major is None and getattr(args, "app", ""):
+        # The application knows better than this machine does. One that ships
+        # its own Qt is not the Qt installed here, and the filter has to match
+        # the one the application will actually load.
+        majors = bundled_qt_majors(args.app)
+        if len(majors) == 1:
+            qt_major = majors.pop()
+            print(f"{Path(args.app).name} carries Qt {qt_major}; building "
+                  "against that")
 
     try:
         print(f"source: {source_dir()}")
         library = build(args.out, with_test_app=args.with_test_app,
-                        jobs=args.jobs, verbose=args.verbose)
+                        jobs=args.jobs, verbose=args.verbose,
+                        qt_major=qt_major)
     except BuildError as error:
         print(f"\n{error}", file=sys.stderr)
         return 1
@@ -451,6 +464,8 @@ def _cmd_build_filter(args) -> int:
         # Printed because an application started by a launch script does not
         # record without it.
         print(f"       {gate}  (used automatically)")
+    print(f"\nbuilt against Qt {library.name.split('.')[1]}; the application "
+          "must use the same major version")
     print("\nrecord with it:")
     print(f"  python -m qat_recorder record --lib {library} \\")
     print("      --app /path/to/your/app --seconds 60 --out ./recorded")
@@ -739,6 +754,14 @@ def build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument(
         "--with-test-app", action="store_true",
         help="also build a small Qt application to try recording against")
+    build_parser.add_argument(
+        "--qt", choices=("auto", "5", "6"), default="auto",
+        help="Qt major version to build against (default: the newest installed, "
+             "or the one --app carries)")
+    build_parser.add_argument(
+        "--app", default="",
+        help="the application this filter is for; an application that ships "
+             "its own Qt decides which Qt to build against")
     build_parser.add_argument("--jobs", type=int, default=0)
     build_parser.add_argument("--verbose", action="store_true",
                               help="show full compiler output")

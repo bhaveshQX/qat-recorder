@@ -546,7 +546,10 @@ def test_a_filter_built_for_the_wrong_qt_is_reported_before_recording(tmp_path):
     warning = launch.qt_mismatch(app, "/home/x/qatrec-filter/libqatrec.5.15.so")
     assert "built against Qt 5" in warning
     assert "Qt 6" in warning
-    assert "build-filter" in warning
+    assert "qt6-base-dev" in warning
+    # The message is composed wherever the panel runs and read wherever the
+    # application does, so the path it hands back is the one it was given.
+    assert "build-filter --out /home/x/qatrec-filter --qt 6" in warning
 
 
 def test_a_matching_filter_says_nothing(tmp_path):
@@ -561,6 +564,45 @@ def test_nothing_is_claimed_when_nothing_is_known(tmp_path):
     assert launch.qt_mismatch(script(tmp_path), "/x/libqatrec.5.15.so") == ""
     assert launch.qt_mismatch(bundled_app(tmp_path), "") == ""
     assert launch.qt_mismatch("", "/x/libqatrec.5.15.so") == ""
+
+
+# --- building the right filter ----------------------------------------------
+
+def test_a_rebuild_does_not_inherit_the_previous_builds_qt(tmp_path):
+    """CMake caches which Qt it found. Installing the Qt 6 headers and building
+    again in the same directory therefore built Qt 5 again, and the stale
+    library left beside the new one sorts first -- so the path reported was the
+    old one too."""
+    from qat_recorder.native import discard_previous
+
+    (tmp_path / "CMakeCache.txt").write_text("Qt5_DIR:PATH=/usr/lib/cmake/Qt5",
+                                             encoding="utf-8")
+    (tmp_path / "CMakeFiles").mkdir()
+    (tmp_path / "CMakeFiles" / "junk").write_text("x", encoding="utf-8")
+    (tmp_path / "libqatrec.5.15.so").write_bytes(b"old filter")
+    (tmp_path / "libqatgate.so").write_bytes(b"old gate")
+    (tmp_path / "keep.txt").write_text("not ours", encoding="utf-8")
+
+    discard_previous(tmp_path)
+
+    assert not (tmp_path / "CMakeCache.txt").exists()
+    assert not (tmp_path / "CMakeFiles").exists()
+    assert not (tmp_path / "libqatrec.5.15.so").exists()
+    assert not (tmp_path / "libqatgate.so").exists()
+    assert (tmp_path / "keep.txt").exists()
+
+
+def test_discarding_is_fine_in_a_directory_that_has_nothing_in_it(tmp_path):
+    from qat_recorder.native import discard_previous
+
+    discard_previous(tmp_path)          # must not raise
+
+
+def test_the_build_can_be_told_which_qt_to_use():
+    """The application's Qt, not this machine's."""
+    text = (ROOT / "native" / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "QATREC_QT_MAJOR" in text
+    assert "find_package(Qt${QATREC_QT_MAJOR} REQUIRED COMPONENTS Core Gui)" in text
 
 
 # --- finding the gate -------------------------------------------------------

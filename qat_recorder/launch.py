@@ -311,12 +311,22 @@ def qt_mismatch(app_path, lib_path) -> str:
     if not majors or major in majors:
         return ""
     carries = " and ".join(f"Qt {one}" for one in sorted(majors))
+    wanted = min(majors)
+    # os.path, not Path: the message is composed wherever the panel runs and
+    # read wherever the application does, and a posix path must come back out
+    # as the posix path that was put in.
+    out = os.path.dirname(str(lib_path))
     return (f"{Path(lib_path).name} was built against Qt {major}, but "
             f"{Path(app_path).name} carries {carries} beside it. A filter "
             "built against the wrong major version loads without complaining "
-            "and then sees none of the application's widgets. Install the "
-            f"matching development package (qt{min(majors)}-base-dev | "
-            f"qt{min(majors)}-qtbase-devel) and rebuild with `build-filter`.")
+            "and then sees none of the application's widgets. To build the "
+            "right one:\n"
+            f"    sudo apt install qt{wanted}-base-dev"
+            f"     (RHEL: sudo dnf install qt{wanted}-qtbase-devel)\n"
+            f"    python -m qat_recorder build-filter --out {out} "
+            f"--qt {wanted}\n"
+            f"then point the recorder at the libqatrec.{wanted}.*.so it "
+            "builds.")
 
 
 def discover_gate(lib_path=None) -> Optional[str]:
