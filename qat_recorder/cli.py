@@ -504,6 +504,19 @@ def _cmd_build_filter(args) -> int:
     return 0
 
 
+def _cmd_version(args) -> int:
+    """Which build is installed, and what it can do.
+
+    Every wheel has the same file name, so a stale copy installs exactly as
+    quietly as a fresh one -- and the recording then fails in the old way, with
+    a log identical to the one the fix produces.
+    """
+    from qat_recorder import provenance
+
+    print(provenance.describe())
+    return 0
+
+
 def _cmd_qat_servers(args) -> int:
     """Report -- and optionally repair -- Qat's prebuilt server libraries.
 
@@ -802,6 +815,11 @@ def build_parser() -> argparse.ArgumentParser:
     build_parser.add_argument("--verbose", action="store_true",
                               help="show full compiler output")
     build_parser.set_defaults(func=_cmd_build_filter)
+
+    version_parser = sub.add_parser(
+        "version",
+        help="which build this is, and which fixes it has")
+    version_parser.set_defaults(func=_cmd_version)
 
     servers_parser = sub.add_parser(
         "qat-servers",

@@ -37,6 +37,12 @@ def _make_controller_factory():
 
 
 def main(argv=None) -> int:
+    # First line of every session's log. Four wheels with the same file name
+    # have crossed to the same VM; this is what says which one arrived.
+    from qat_recorder import provenance
+
+    print(provenance.one_line())
+
     parser = argparse.ArgumentParser(prog="qat-recorder-agent")
     parser.add_argument("--bind", default="127.0.0.1",
                         help="interface to listen on (default: loopback only)")
