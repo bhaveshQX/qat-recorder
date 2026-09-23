@@ -251,6 +251,39 @@ def test_a_script_the_kernel_cannot_exec_still_leaves_the_wrapper(tmp_path):
     assert "wrapper.sh" not in result.stdout, result.stdout
 
 
+@pytest.mark.skipif(os.name == "nt", reason="shell wrapper is Linux-only")
+def test_an_application_run_as_root_keeps_its_injection(tmp_path):
+    """sudo drops LD_PRELOAD whatever it is told, so a plain `sudo app` starts
+    the application with nothing injected. env, after sudo, puts it back."""
+    gate = tmp_path / "libqatgate.so"
+    gate.write_bytes(b"not really a library")
+    sudo = tmp_path / "sudo"
+    sudo.write_text('#!/bin/sh\nfor a in "$@"; do echo "ARG=[$a]"; done\n',
+                    encoding="utf-8")
+    sudo.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(ROOT / "qat_recorder" / "resources" / "wrapper.sh"), "-x"],
+        env={**os.environ,
+             "PATH": f"{tmp_path}:{os.environ['PATH']}",
+             "LD_PRELOAD": "/qat/libinjector.so",
+             "QATREC_GATE": str(gate),
+             "QATREC_LIB": "/opt/libqatrec.so",
+             "QATREC_PORT": "4242",
+             "QATREC_SUDO": "1",
+             "QATREC_APP_IS_SCRIPT": "1",
+             "QATREC_APP": str(tmp_path / "start_app.sh")},
+        capture_output=True, text=True, timeout=30)
+
+    args = [line[5:-1] for line in result.stdout.splitlines()
+            if line.startswith("ARG=[")]
+    assert args[:2] == ["-n", "env"], result.stdout + result.stderr
+    assert f"LD_PRELOAD={gate}" in args
+    assert "QATREC_PRELOAD=/qat/libinjector.so:/opt/libqatrec.so" in args
+    assert "QATREC_PORT=4242" in args
+    assert args[-2:] == [str(tmp_path / "start_app.sh"), "-x"]
+
+
 # --- following the application ----------------------------------------------
 
 class FakeContext:
@@ -500,6 +533,28 @@ def test_a_launch_that_fails_does_not_leave_the_application_running(tmp_path):
     killed = [entry for entry in log if entry[0] == "kill"]
     # The application and the daemon it started, then the launcher itself.
     assert [entry[1] for entry in killed] == [206, 205, 100]
+
+
+def test_an_application_run_as_root_is_closed_through_sudo(monkeypatch):
+    """Everything Qat would touch on close belongs to root: the application,
+    sudo itself, and the port file the application's server wrote."""
+    log = []
+    ran = []
+    context = FakeContext(pid=100)
+    context.qatrec_app_pid = 205
+    context.config_file = "/tmp/qat-205.txt"
+    qat = FakeQat(context, log=log)
+    clock, tick = fake_time()
+    monkeypatch.setenv("QATREC_SUDO", "1")
+    monkeypatch.setattr(launch.subprocess, "run",
+                        lambda command, **_: ran.append(command))
+
+    launch.close(qat, context, sleep=tick, clock=clock, grace=1.0,
+                 kill=FakeKiller(log))
+
+    assert log == [("kill", 205, signal.SIGTERM), ("kill", 100, signal.SIGTERM),
+                   ("close", 100)]
+    assert ran == [["sudo", "-n", "rm", "-f", "/tmp/qat-205.txt"]]
 
 
 def test_closing_an_ordinary_application_is_just_closing_it():

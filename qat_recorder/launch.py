@@ -34,6 +34,7 @@ import inspect
 import os
 import re
 import signal
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -482,7 +483,8 @@ def start(qat_module, name: str, *, app_path=None, follow: Optional[bool] = None
     nothing to improve there, and nothing worth risking.
     """
     if follow is None:
-        follow = is_script(app_path)
+        # Under sudo the application is sudo's child, whatever it is.
+        follow = is_script(app_path) or as_root()
     if not follow or not _supports_detached(qat_module.start_application):
         return qat_module.start_application(name)
 
@@ -715,12 +717,42 @@ def close(qat_module, context, *, sleep: Callable = time.sleep,
         limit = clock() + grace
         while clock() < limit and not _has_exited(context):
             sleep(POLL_SECONDS)
+    if as_root():
+        # Qat removes the port file and kills the process it launched, and both
+        # belong to root: sudo, and the file the application's server wrote.
+        if launcher and not _has_exited(context):
+            _stop(launcher, sleep=sleep, clock=clock, grace=grace, kill=kill)
+        port_file = getattr(context, "config_file", None)
+        if port_file:
+            subprocess.run(["sudo", "-n", "rm", "-f", str(port_file)],
+                           capture_output=True, check=False)
     return qat_module.close_application(context)
+
+
+def as_root() -> bool:
+    """QATREC_SUDO=1: wrapper.sh starts the application through `sudo -n`.
+
+    For an application that has to run as root -- one whose data folder only
+    root can write, say. The agent stays the user it was started as; only the
+    application is root, which means only sudo can signal it.
+    """
+    return os.environ.get("QATREC_SUDO") == "1"
+
+
+def _sudo_kill(pid: int, sig: int) -> None:
+    """os.kill for a process owned by root, failing the same way."""
+    result = subprocess.run(["sudo", "-n", "kill", f"-{int(sig)}", str(pid)],
+                            capture_output=True, check=False)
+    if result.returncode != 0:
+        raise ProcessLookupError(pid)
 
 
 def _stop(pid: int, *, sleep: Callable, clock: Callable, grace: float,
           kill: Optional[Callable] = None) -> None:
-    send = kill if kill is not None else os.kill
+    if kill is not None:
+        send = kill
+    else:
+        send = _sudo_kill if as_root() else os.kill
     try:
         send(pid, signal.SIGTERM)
     except OSError:

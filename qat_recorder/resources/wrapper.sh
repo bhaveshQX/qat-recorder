@@ -142,7 +142,35 @@ fi
 # env is a fresh process under the gate alone, and on ENOEXEC its execvp hands
 # the script to /bin/sh as a fresh process too. A script with a good #! line
 # runs exactly as before.
-if [ "${QATREC_APP_IS_SCRIPT:-0}" = "1" ]; then
+if [ "${QATREC_APP_IS_SCRIPT:-0}" = "1" ] && [ "${QATREC_SUDO:-0}" != "1" ]; then
     exec env "${QATREC_APP}" "$@"
+fi
+
+# An application that has to run as root: QATREC_SUDO=1.
+#
+# One customer's application is started with `sudo ./start_mako_shoulder.sh`
+# because its data folder belongs to root. Started as anyone else it aborts in
+# its own logging setup, before Qat's server has a chance to announce itself.
+#
+# sudo resets the environment and drops LD_PRELOAD whatever it is told, so a
+# plain `sudo app` starts the application with nothing injected. env runs after
+# sudo, as root, and puts back exactly what the application needs: the gate and
+# what it loads, the filter's port, Qat's TEMP (where its server writes the port
+# file) and the display. -n: never prompt -- nobody is there to answer. It needs
+# a sudoers rule, or it fails at once with "a password is required".
+#
+# env is also a fresh process, so the script case above is covered.
+if [ "${QATREC_SUDO:-0}" = "1" ]; then
+    exec sudo -n env \
+        LD_PRELOAD="${LD_PRELOAD:-}" \
+        QATREC_PRELOAD="${QATREC_PRELOAD:-}" \
+        QATREC_PID="${QATREC_PID:-}" \
+        QATREC_PORT="${QATREC_PORT:-}" \
+        QATREC_GATE_DEBUG="${QATREC_GATE_DEBUG:-0}" \
+        QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME-}" \
+        TEMP="${TEMP:-/tmp}" \
+        DISPLAY="${DISPLAY:-}" \
+        XAUTHORITY="${XAUTHORITY:-${HOME}/.Xauthority}" \
+        "${QATREC_APP}" "$@"
 fi
 exec "${QATREC_APP}" "$@"

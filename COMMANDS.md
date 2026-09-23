@@ -57,6 +57,27 @@ Open the ngrok link it prints. The token it asks for:
 cat ~/.qatrec/token
 ```
 
+## VM — an application that has to run as root
+
+If the application is normally started with `sudo` (for example because its
+data folder belongs to root), start the agent with `QATREC_SUDO=1`. The agent
+stays your user; only the application is started as root, with the injection
+passed through `sudo`:
+
+```bash
+QATREC_SUDO=1 ~/qatrec/bin/python -m qat_recorder.agent.cli \
+    --token-file ~/.qatrec/token \
+    --ngrok --ngrok-authtoken <your-ngrok-authtoken>
+```
+
+sudo must not ask for a password, because nobody is there to type it. Check with
+`sudo -k; sudo -n true && echo ok`. If it asks, that is for the machine's admin
+to decide: what the recorder runs through sudo is `env`, so a password-free rule
+for it amounts to password-free root for that user.
+
+Start the agent from a terminal on the desktop, so `DISPLAY` and `XAUTHORITY`
+point at the screen the application should open on.
+
 ## VM — install a new wheel later
 
 ```bash
