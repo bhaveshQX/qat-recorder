@@ -41,7 +41,8 @@ def main(argv=None) -> int:
     # have crossed to the same VM; this is what says which one arrived.
     from qat_recorder import provenance
 
-    print(provenance.one_line())
+    # stderr: stdout is output, and `--generate-token > token` saves all of it.
+    print(provenance.one_line(), file=sys.stderr)
 
     parser = argparse.ArgumentParser(prog="qat-recorder-agent")
     parser.add_argument("--bind", default="127.0.0.1",

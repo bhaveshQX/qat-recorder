@@ -82,3 +82,14 @@ def test_the_agent_says_which_build_it_is_on_startup():
     source = (Path(provenance.__file__).parent / "agent" / "cli.py").read_text(
         encoding="utf-8")
     assert "provenance.one_line()" in source
+
+
+def test_a_generated_token_is_all_that_reaches_stdout(capsys):
+    """`--generate-token > ~/.qatrec/token` is how install.sh makes the token
+    file. A banner on stdout became its first line, the agent took both lines as
+    the token, and every panel got 401 with the right token in hand."""
+    from qat_recorder.agent import cli
+
+    assert cli.main(["--generate-token"]) == 0
+    out = capsys.readouterr().out
+    assert len(out.split()) == 1, out
