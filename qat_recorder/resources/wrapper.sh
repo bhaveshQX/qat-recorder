@@ -123,4 +123,26 @@ if [ "${QATREC_GATE_DEBUG:-0}" = "1" ]; then
     } >&2
 fi
 
+# A launch script goes through env, so that it always starts in a fresh process.
+#
+# This shell was started by Qat, with Qat's injector preloaded, and it is still
+# loaded here: LD_PRELOAD=gate only takes effect at the next exec. When a script
+# has a first line the kernel does not recognise -- a UTF-8 byte-order mark
+# before the #!, from an editor on Windows -- `exec` fails with ENOEXEC and bash
+# does not start a new process: it runs the script itself, in this one, with the
+# injector still mapped. Every $(...) then forks a copy that prints OnUnload on
+# the way out -- the gate never gets a say -- and the script's root comes back as
+#
+#     .../spine.Build3383 OnUnload
+#
+# The tell is this, on the first line of the output:
+#
+#     start_spine.sh: line 1: #!/bin/sh: No such file or directory
+#
+# env is a fresh process under the gate alone, and on ENOEXEC its execvp hands
+# the script to /bin/sh as a fresh process too. A script with a good #! line
+# runs exactly as before.
+if [ "${QATREC_APP_IS_SCRIPT:-0}" = "1" ]; then
+    exec env "${QATREC_APP}" "$@"
+fi
 exec "${QATREC_APP}" "$@"

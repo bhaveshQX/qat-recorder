@@ -233,6 +233,24 @@ def test_the_wrapper_hands_the_gate_the_libraries_it_replaced(tmp_path):
     assert "PID=[" in result.stdout and "PID=[]" not in result.stdout
 
 
+@pytest.mark.skipif(os.name == "nt", reason="shell wrapper is Linux-only")
+def test_a_script_the_kernel_cannot_exec_still_leaves_the_wrapper(tmp_path):
+    """A byte-order mark before `#!` makes exec fail with ENOEXEC, and bash
+    then runs the script inside the wrapper -- where Qat's injector is still
+    loaded, and every $(...) captures its OnUnload."""
+    probe = tmp_path / "start_app.sh"
+    probe.write_bytes(b"\xef\xbb\xbf#!/bin/sh\nps -p $$ -o command=\n")
+    probe.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(ROOT / "qat_recorder" / "resources" / "wrapper.sh")],
+        env={**os.environ, "QATREC_APP": str(probe),
+             "QATREC_APP_IS_SCRIPT": "1"},
+        capture_output=True, text=True, timeout=30)
+
+    assert "wrapper.sh" not in result.stdout, result.stdout
+
+
 # --- following the application ----------------------------------------------
 
 class FakeContext:
