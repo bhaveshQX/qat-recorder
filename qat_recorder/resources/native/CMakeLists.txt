@@ -93,6 +93,24 @@ target_compile_definitions(qatgate PRIVATE _GNU_SOURCE)
 target_compile_options(qatgate PRIVATE -Wall -Wextra -fvisibility=hidden)
 
 # ---------------------------------------------------------------------------
+# A Qat plugin that reports QML embedded in a widget, which Qat cannot reach on
+# its own -- see qatembedded.cpp. `build-filter` copies it into Qat's plugins
+# folder. Public QtCore and QtGui only, for the same reason as the filter.
+# ---------------------------------------------------------------------------
+add_library(qatembedded SHARED qatembedded.cpp)
+target_link_libraries(qatembedded PRIVATE
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Gui
+)
+target_compile_options(qatembedded PRIVATE -Wall -Wextra -fvisibility=hidden)
+if(QATREC_STATIC_CXX_WORKS)
+    target_link_options(qatembedded PRIVATE -static-libstdc++)
+endif()
+set_target_properties(qatembedded PROPERTIES
+    OUTPUT_NAME "QatrecEmbeddedPlugin.${QT_VERSION_MAJOR}"
+)
+
+# ---------------------------------------------------------------------------
 # A minimal native Qt application to test the filter against. Native rather than
 # PySide so the test exercises the real target case: a compiled Qt binary.
 # ---------------------------------------------------------------------------

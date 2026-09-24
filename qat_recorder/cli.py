@@ -474,6 +474,20 @@ def _cmd_build_filter(args) -> int:
         # Printed because an application started by a launch script does not
         # record without it.
         print(f"       {gate}  (used automatically)")
+    # Without it Qat cannot find anything in QML embedded in a widget, and
+    # every replay of such an application fails: see native/qatembedded.cpp.
+    from qat_recorder.servers import EMBEDDED_PLUGIN, install_embedded_plugin
+
+    major = library.name.split(".")[1]
+    plugin = library.parent / f"lib{EMBEDDED_PLUGIN}.{major}{library.suffix}"
+    installed = install_embedded_plugin(plugin)
+    if installed:
+        print(f"       {plugin.name} installed into Qat's plugins for Qt "
+              + ", ".join(path.name.split(".", 1)[1].rsplit(".", 1)[0]
+                          for path in installed))
+    elif plugin.is_file():
+        print(f"       {plugin.name} built, but no Qat plugins folder to put it "
+              "in -- is qat installed in this environment?", file=sys.stderr)
     # Built too new is as broken as built for the wrong major, and far less
     # obvious: compatibility within a Qt major runs forward only.
     if getattr(args, "app", ""):

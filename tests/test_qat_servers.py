@@ -203,3 +203,33 @@ def test_what_this_machine_provides_is_asked_of_this_machine():
     machine = servers.Machine.here()
     for value in (machine.glibc, machine.glibcxx):
         assert value is None or isinstance(value, tuple)
+
+
+def test_the_embedded_qml_plugin_goes_in_under_every_version_qat_ships(tmp_path):
+    """The server loads plugins ending in the Qt version it was BUILT for, and
+    after --fix that is not the one in its file name: the 6.7 server standing in
+    as libQatServer.6.8.so looks for 6.7.so. Installed under every 6.x Qat's QML
+    plugin ships for, whichever server loads finds it -- and never under Qt 5,
+    which a Qt 6 build cannot serve."""
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    for version in ("5.15", "6.2", "6.7", "6.8", "6.10"):
+        (plugins / f"libQmlPlugin.{version}.so").write_bytes(b"qat's")
+    built = tmp_path / "build" / "libQatrecEmbeddedPlugin.6.so"
+    built.parent.mkdir()
+    built.write_bytes(b"ours")
+
+    installed = servers.install_embedded_plugin(built, bin_dir=tmp_path)
+
+    assert sorted(path.name for path in installed) == [
+        "libQatrecEmbeddedPlugin.6.10.so", "libQatrecEmbeddedPlugin.6.2.so",
+        "libQatrecEmbeddedPlugin.6.7.so", "libQatrecEmbeddedPlugin.6.8.so"]
+    assert all(path.read_bytes() == b"ours" for path in installed)
+    assert not (plugins / "libQatrecEmbeddedPlugin.5.15.so").exists()
+
+
+def test_the_embedded_qml_plugin_is_built_with_the_filter():
+    text = (Path(__file__).resolve().parents[1] / "native"
+            / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert "add_library(qatembedded SHARED qatembedded.cpp)" in text
+    assert 'OUTPUT_NAME "QatrecEmbeddedPlugin.${QT_VERSION_MAJOR}"' in text

@@ -264,7 +264,8 @@ def test_the_packaged_filter_is_the_one_in_the_repository():
 
     packaged = source_dir()
     repository = Path(__file__).resolve().parents[1] / "native"
-    for name in ("qatrec.cpp", "CMakeLists.txt", "test_app.cpp"):
+    for name in ("qatrec.cpp", "CMakeLists.txt", "test_app.cpp",
+                 "qatembedded.cpp"):
         assert (packaged / name).read_bytes() == (repository / name).read_bytes(), (
             f"qat_recorder/resources/native/{name} differs from native/{name}")
 
