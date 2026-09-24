@@ -26,6 +26,7 @@ crash dump, a log or a packet capture cannot leak a password.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import threading
 from dataclasses import dataclass, field
@@ -38,6 +39,21 @@ from typing import Any, Iterable, Iterator, Mapping, Optional
 WINDOW_CLASSES = frozenset({
     "QWidgetWindow", "QWindow", "QQuickWindow", "QQuickWidgetOffscreenWindow",
 })
+
+
+#: The suffix Qt gives a class it makes for a QML component: RoundButton.qml
+#: loads as RoundButton_QMLTYPE_111, an inline one as Foo_QML_3. The number is
+#: the order the types were loaded in, so it changes between runs -- and Qat
+#: never matches it anyway: it reports and compares the name without it. A
+#: definition with the suffix found nothing on replay, every time. Measured
+#: against Qat 1.8's server: {"type": "RoundButton_QMLTYPE_0"} is missing,
+#: {"type": "RoundButton"} is found.
+_QML_TYPE_SUFFIX = re.compile(r"_QML(?:TYPE)?_\d+$")
+
+
+def qml_type_name(class_name: str) -> str:
+    """The class name as Qat knows it: without Qt's per-run QML suffix."""
+    return _QML_TYPE_SUFFIX.sub("", class_name)
 
 
 @dataclass(frozen=True)
@@ -73,7 +89,7 @@ class Locator:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Locator":
         return cls(
-            cls=str(data.get("class", "")),
+            cls=qml_type_name(str(data.get("class", ""))),
             object_name=str(data.get("objectName", "")),
             text=str(data.get("text", "")),
             title=str(data.get("title", "")),
@@ -84,9 +100,10 @@ class Locator:
             item_column=int(data.get("itemColumn", 0)),
             item_text=str(data.get("itemText", "")),
             item_view=str(data.get("itemView", "")),
-            item_view_class=str(data.get("itemViewClass", "")),
+            item_view_class=qml_type_name(str(data.get("itemViewClass", ""))),
             path=tuple(
-                (str(item.get("class", "")), str(item.get("objectName", "")))
+                (qml_type_name(str(item.get("class", ""))),
+                 str(item.get("objectName", "")))
                 for item in data.get("path", [])
             ),
         )

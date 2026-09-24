@@ -501,7 +501,9 @@ class CaptureSession:
     # -- public ------------------------------------------------------------
 
     def feed(self, event: RawEvent) -> None:
-        if self._t0 is None:
+        # Only from an event that has a time: the filter's `hello` comes first
+        # and has none, and a zero here put every step at its epoch second.
+        if self._t0 is None and event.t:
             self._t0 = event.t
         if self._group and not self._same_interaction(self._group[0], event):
             self._flush_group()
