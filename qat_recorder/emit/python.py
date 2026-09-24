@@ -112,9 +112,17 @@ def find(candidates, timeout_ms=None):
         for definition in candidates:
             try:
                 qat.wait_for_object(definition, timeout=250)
-                return definition
             except (LookupError, RuntimeError):
                 continue
+            # The definition as it just matched. wait_for_object only counts an
+            # object that is visible and enabled; mouse_click, type_in and the
+            # rest send the definition as given, and count every object that
+            # has it -- including the copies an application keeps on its hidden
+            # pages. "Load Case" in mako_shoulder was found here, then refused
+            # by the click as "Multiple objects found".
+            if isinstance(definition, dict):
+                return dict(definition, visible=True, enabled=True)
+            return definition
         if time.time() >= deadline:
             break
         time.sleep(0.1)
