@@ -267,3 +267,20 @@ def test_the_packaged_filter_is_the_one_in_the_repository():
     for name in ("qatrec.cpp", "CMakeLists.txt", "test_app.cpp"):
         assert (packaged / name).read_bytes() == (repository / name).read_bytes(), (
             f"qat_recorder/resources/native/{name} differs from native/{name}")
+
+
+def test_a_click_in_a_qml_window_is_recorded_on_the_item_not_the_window():
+    """QtQuick hands a window's input to its items with sendEvent, which clears
+    spontaneous(): only the window got through, as VIS::QuickView_C '<unnamed>',
+    and every step of a QML session was unrecordable. The press is held until
+    delivery ends, so it names the item that took it -- the same one its release
+    goes to -- and not the label on top that was offered it first.
+
+    Checked live against a QML window clicked with QTest: press and release both
+    on the Button, keys on the TextField."""
+    from qat_recorder.native import source_dir
+
+    text = (source_dir() / "qatrec.cpp").read_text(encoding="utf-8")
+    assert 'object->inherits("QQuickWindow")' in text
+    assert 'object->inherits("QQuickItem")' in text
+    assert "QTimer::singleShot(0, flushQuickHeld)" in text

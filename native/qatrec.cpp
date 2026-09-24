@@ -25,6 +25,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QPoint>
 #include <QtCore/QString>
+#include <QtCore/QTimer>
 #include <QtCore/QVariant>
 #include <QtCore/QtGlobal>
 
@@ -425,6 +426,63 @@ bool tracksRealInput(QEvent::Type type)
     }
 }
 
+// A QML window hands its input on to its items with QCoreApplication::sendEvent,
+// and sendEvent clears spontaneous() -- so the gate below dropped every item's
+// copy and recorded only the window. Observed in a QML application: every click
+// recorded as a mouse_press on VIS::QuickView_C '<unnamed>', which nothing can
+// address, and the whole session came out as unrecordable steps.
+//
+// So the window's spontaneous event is not recorded; it marks that a delivery is
+// under way, and a QQuickItem that receives the same kind of event in the next
+// moment is recorded in its place. Which one:
+//
+//   * A key goes to the item with focus first, and only climbs to its parents
+//     if that item ignores it. The first is the step.
+//   * A press is offered to the items under the pointer, topmost first, until
+//     one takes it -- a Button's own label is offered the press before the
+//     Button is. The last one offered is the one that took it, and it is the
+//     one the release goes to; recording the label made press and release name
+//     different objects, which reads as a drag and was dropped.
+//
+// The last one cannot be known until delivery is over, so the event is held and
+// sent from a zero timer, which runs once the window has finished with it.
+// inherits() compares class names, so none of this links QtQuick. Qat's
+// playback never starts from a spontaneous window event, so it still cannot be
+// recorded.
+QEvent::Type g_quickPending = QEvent::None;
+long long g_quickPendingAt = 0;
+std::string g_quickHeld;
+
+
+void flushQuickHeld()
+{
+    if (!g_quickHeld.empty())
+        enqueue(std::move(g_quickHeld));
+    g_quickHeld.clear();
+}
+
+bool isKey(QEvent::Type type)
+{
+    return type == QEvent::KeyPress || type == QEvent::KeyRelease;
+}
+
+constexpr long long kQuickDeliveryMs = 100;
+
+bool isQuickDelivered(QEvent::Type type)
+{
+    switch (type) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::KeyPress:
+    case QEvent::KeyRelease:
+    case QEvent::Wheel:
+        return true;
+    default:
+        return false;
+    }
+}
+
 class QatRecFilter : public QObject
 {
 public:
@@ -472,14 +530,31 @@ protected:
         if (!kind)
             return false;
 
-        // The whole point: only events originating from the window system are
-        // user input. Qat's own playback and any programmatic change are not
-        // spontaneous and are dropped here.
-        if (!event->spontaneous())
-            return false;
-
         if (!object)
             return false;
+
+        // The whole point: only events originating from the window system are
+        // user input. Qat's own playback and any programmatic change are not
+        // spontaneous and are dropped here -- except a QML window's own
+        // delivery of a spontaneous event to its item, which is the person's
+        // input under another name.
+        bool quickItem = false;
+        if (!event->spontaneous()) {
+            if (type != g_quickPending
+                    || now - g_quickPendingAt > kQuickDeliveryMs
+                    || !object->inherits("QQuickItem"))
+                return false;
+            if (isKey(type))
+                g_quickPending = QEvent::None;  // the item with focus, only it
+            quickItem = true;
+        } else {
+            flushQuickHeld();                   // anything held comes first
+            if (isQuickDelivered(type) && object->inherits("QQuickWindow")) {
+                g_quickPending = type;
+                g_quickPendingAt = now;
+                return false;                   // the item it reaches is the step
+            }
+        }
 
         if (type == QEvent::Close && !isDismissedWindow(object))
             return false;
@@ -538,6 +613,16 @@ protected:
         appendLocator(line, object, hitPoint);
         line += '}';
         line += '\n';
+
+        if (quickItem && !isKey(type)) {
+            // Each item offered it replaces the last; the timer sends the one
+            // that took it.
+            const bool first = g_quickHeld.empty();
+            g_quickHeld = std::move(line);
+            if (first)
+                QTimer::singleShot(0, flushQuickHeld);
+            return false;
+        }
 
         enqueue(std::move(line));
         return false;   // never consume: the application must behave normally
