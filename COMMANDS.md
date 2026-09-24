@@ -78,6 +78,22 @@ for it amounts to password-free root for that user.
 Start the agent from a terminal on the desktop, so `DISPLAY` and `XAUTHORITY`
 point at the screen the application should open on.
 
+## VM — an application that resumes where it was left
+
+Some applications save their state and restore it on the next start. Set
+`QATREC_RESET` to a command that puts it back to one fixed starting point; the
+recorder runs it before every launch -- recording, replay and probe -- and does
+not start the application if it fails.
+
+```bash
+# once: with the application closed and in the state every test should start from
+sudo cp -a /opt/stryker/data/mako_shoulder_1_5/patients ~/mako-patients-start
+
+# then start the agent with:
+QATREC_RESET='sudo -n rm -rf /opt/stryker/data/mako_shoulder_1_5/patients && sudo -n cp -a /home/ronit/mako-patients-start /opt/stryker/data/mako_shoulder_1_5/patients' \
+QATREC_SUDO=1 ~/qatrec/bin/python -m qat_recorder.agent.cli ...
+```
+
 ## VM — install a new wheel later
 
 ```bash
