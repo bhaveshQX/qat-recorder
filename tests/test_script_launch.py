@@ -614,6 +614,38 @@ def test_the_generated_test_launches_the_same_way_the_recording_did():
     compile(source, "generated.py", "exec")
 
 
+def test_a_replayed_script_leaves_its_read_only_folder_alone(tmp_path,
+                                                             monkeypatch):
+    """Qat keeps applications.json in the working directory. The generated test
+    used to change into the application's folder before registering it, and
+    mako_shoulder's is read-only: PermissionError before anything launched. A
+    script goes through the wrapper, which changes folder by itself."""
+    import sys
+    import types
+
+    from qat_recorder.emit import emit_python
+    from qat_recorder.ir import Action, ActionKind, Recording, Target
+
+    app = bundled_app(tmp_path)
+    recording = Recording(app="mako")
+    recording.meta["app_path"] = app
+    recording.add(Action(ActionKind.LAUNCH, args={"app": "mako"}))
+    recording.add(Action(ActionKind.CLICK,
+                         target=Target(definition={"objectName": "ok"},
+                                       label="ok")))
+    source = emit_python(recording)
+    assert "if not starts_in_its_own_folder(APP_PATH):" in source
+
+    monkeypatch.setitem(sys.modules, "qat", types.ModuleType("qat"))
+    generated = {"__file__": str(tmp_path / "test_recorded.py")}
+    exec(compile(source, "generated.py", "exec"), generated)
+    assert generated["starts_in_its_own_folder"](app) is True
+
+    qat = FakeQat(FakeContext(pid=1))
+    launch.register_for_replay(qat, "mako", app, wrapper="/opt/wrapper.sh")
+    assert os.environ["QATREC_APP_IS_SCRIPT"] == "1"
+
+
 # --- the Qt the application actually loads ----------------------------------
 
 def bundled_app(tmp_path, soname="libQt6Core.so.6"):
