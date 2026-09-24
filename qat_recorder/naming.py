@@ -272,12 +272,12 @@ class NameResolver:
         name = _clean(props.get("objectName"))
         if name:
             candidate = {"objectName": name}
-            if len(self.backend.find_all(candidate)) == 1:
+            if the_one(self.backend, candidate) is not None:
                 return candidate
         qml_id = _clean(props.get("id"))
         if qml_id:
             candidate = {"id": qml_id}
-            if len(self.backend.find_all(candidate)) == 1:
+            if the_one(self.backend, candidate) is not None:
                 return candidate
         return None
 
@@ -316,9 +316,10 @@ class NameResolver:
             matches = self.backend.find_all(definition)
         except Exception:                                    # noqa: BLE001
             return False
-        if len(matches) != 1:
+        found = the_one(self.backend, definition, matches)
+        if found is None:
             return False
-        return self.backend.identity(matches[0]) == self.backend.identity(node)
+        return self.backend.identity(found) == self.backend.identity(node)
 
     def _type_of(self, node) -> Optional[str]:
         node_type = getattr(node, "type", None)
@@ -368,6 +369,33 @@ def summarise(targets: Sequence[Target]) -> dict:
 
 #: A class name so generic that scoping by it says nothing.
 _ANONYMOUS_CONTAINERS = frozenset({"QWidget", "QFrame", "QObject"})
+
+
+def the_one(backend, definition, matches=None):
+    """The object a replay would act on for this definition, or None.
+
+    Exactly one match is that object. Several can still name exactly one: a
+    replay finds objects through `wait_for_object`, which only counts one that
+    is visible and enabled, and then acts on that one. An application that
+    keeps its other pages alive -- mako_shoulder -- has most of its controls
+    several times over, one of them on screen, and counting the hidden copies
+    made nearly every unnamed control on it look ambiguous and be dropped.
+    """
+    if matches is None:
+        try:
+            matches = list(backend.find_all(definition))
+        except Exception:                                    # noqa: BLE001
+            return None
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) < 2 or not isinstance(definition, dict):
+        return None
+    try:
+        usable = list(backend.find_all(
+            {**definition, "visible": True, "enabled": True}))
+    except Exception:                                        # noqa: BLE001
+        return None
+    return usable[0] if len(usable) == 1 else None
 
 
 def reported_target(locator) -> Optional[Target]:
