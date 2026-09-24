@@ -284,3 +284,29 @@ def test_a_click_in_a_qml_window_is_recorded_on_the_item_not_the_window():
     assert 'object->inherits("QQuickWindow")' in text
     assert 'object->inherits("QQuickItem")' in text
     assert "QTimer::singleShot(0, flushQuickHeld)" in text
+
+
+def test_a_qml_class_is_named_the_way_qat_names_it():
+    """Qt calls the class it makes for RoundButton.qml RoundButton_QMLTYPE_111,
+    numbered in load order, so it changes between runs -- and Qat never matches
+    it: against Qat 1.8's server {"type": "RoundButton_QMLTYPE_0"} is missing and
+    {"type": "RoundButton"} is found. Every such step failed on replay."""
+    locator = Locator.from_dict({
+        "class": "RoundButton_QMLTYPE_111", "objectName": "roundButton",
+        "path": [{"class": "Panel_QML_3", "objectName": "openCase"},
+                 {"class": "QQuickItem", "objectName": ""}]})
+    assert locator.cls == "RoundButton"
+    assert locator.path == (("Panel", "openCase"), ("QQuickItem", ""))
+
+
+def test_the_filters_hello_does_not_start_the_clock():
+    """It has no time, so the session's first step used to be dated from zero --
+    'at 1790230298.31s'."""
+    backend, _ = build_tree()
+    capture = CaptureSession(backend, app_name="sample")
+    capture.feed(RawEvent(kind="hello", t=0, target=Locator(), features=()))
+    capture.feed_all(click_pair(1_700_000_000_000, "QPushButton", text="Import"))
+    capture.feed_all(click_pair(1_700_000_002_000, "QPushButton", text="Export"))
+    recording = capture.finish()
+    times = [action.t for action in recording.actions]
+    assert max(times) < 10, times
