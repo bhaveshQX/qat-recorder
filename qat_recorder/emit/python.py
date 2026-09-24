@@ -165,6 +165,21 @@ def launch_application(name, path):
     return launch.start(qat, name, app_path=path)
 
 
+def starts_in_its_own_folder(path):
+    """Whether the launch changes into the application's folder by itself.
+
+    A launch script is started through the recorder's wrapper, which does. The
+    test must then stay where it is: Qat keeps applications.json in the working
+    directory, and an application's folder may be read-only -- a replay changed
+    into one and failed with PermissionError before it launched anything.
+    """
+    try:
+        from qat_recorder import launch
+    except ImportError:
+        return False
+    return bool(path) and launch.is_script(path)
+
+
 def close_application(context):
     """Close the application, and whatever started it."""
     try:
@@ -717,16 +732,16 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     # Only around the launch: Qat writes applications.json into the working
     # directory, and that belongs beside the test rather than in somebody's
     # application folder.
-    out.append("    _was = os.getcwd()")
-    out.append("    if APP_PATH:")
-    out.append("        os.chdir(os.path.dirname(os.path.abspath(APP_PATH)))")
-    out.append("    try:")
     if app_path:
+        out.append("    _was = os.getcwd()")
+        out.append("    if not starts_in_its_own_folder(APP_PATH):")
+        out.append("        os.chdir(os.path.dirname(os.path.abspath(APP_PATH)))")
+        out.append("    try:")
         out.append("        context = launch_application(APP_NAME, APP_PATH)")
+        out.append("    finally:")
+        out.append("        os.chdir(_was)")
     else:
-        out.append("        context = qat.start_application(APP_NAME)")
-    out.append("    finally:")
-    out.append("        os.chdir(_was)")
+        out.append("    context = qat.start_application(APP_NAME)")
     out.append("    yield context")
     if app_path:
         out.append("    close_application(context)")

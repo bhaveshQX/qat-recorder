@@ -790,6 +790,9 @@ def register_for_replay(qat_module, name: str, app_path: str,
         wrapper = default_wrapper()
 
     os.environ["QATREC_APP"] = str(app_path)
+    # What the recorder tells the wrapper too: a script is not instrumented, and
+    # is started in a fresh process even when its #! line is unreadable.
+    os.environ["QATREC_APP_IS_SCRIPT"] = "1"
     gate = discover_gate()
     if gate:
         os.environ["QATREC_GATE"] = gate
