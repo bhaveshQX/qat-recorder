@@ -59,6 +59,25 @@ def test_two_on_screen_at_once_is_still_not_guessed():
     assert clicks == []
 
 
+def test_a_combo_box_repeated_on_a_hidden_page_is_not_dropped_as_unnamed():
+    """Observed in mako_shoulder: implantOptionCombo, named, and dropped as "a
+    combo box whose own name could not be resolved" -- the name was fine; there
+    were two of it, one on a page that was not showing."""
+    window = FakeNode(["QQuickView", "QObject"], {"objectName": "view"})
+    for visible in (True, False):
+        combo = window.add(FakeNode(["DarlinComboBox", "ComboBox"] + ITEM, {
+            "objectName": "implantOptionCombo", "visible": visible,
+            "currentText": "Standard", "currentIndex": 0}))
+        combo.add(FakeNode(["ComboBox"] + ITEM, {"objectName": "",
+                                                 "visible": visible}))
+    capture = CaptureSession(FakeBackend([window]), app_name="mako")
+    capture.feed_all(click_pair(1_000, "ComboBox", "",
+                                path=[("DarlinComboBox", "implantOptionCombo")]))
+    recording = capture.finish()
+    assert not any("combo box whose own name" in drop.reason
+                   for drop in recording.drops), recording.drops
+
+
 class ChangingBackend(FakeBackend):
     """The first lookups find nothing to settle on, the later ones find it:
     the page is being rebuilt while the recorder asks."""

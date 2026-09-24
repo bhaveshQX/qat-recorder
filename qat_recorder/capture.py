@@ -42,7 +42,7 @@ from qat_recorder.items import (
 )
 from qat_recorder.menus import NOT_FOUND, resolve_menu_item, strip_mnemonic
 from qat_recorder.naming import (
-    NameResolver, is_editable, is_secret_field, reported_target)
+    NameResolver, is_editable, is_secret_field, reported_target, the_one)
 
 # Qt::Key values for keys that do not produce text.
 KEY_NAMES = {
@@ -387,14 +387,17 @@ def find_by_locator(backend, locator: Locator):
     event filter observed rather than from a node we already hold.
     """
     if locator.object_name:
-        matches = backend.find_all({"objectName": locator.object_name})
-        if len(matches) == 1:
-            return matches[0]
+        named = {"objectName": locator.object_name}
+        matches = backend.find_all(named)
+        found = the_one(backend, named, matches)
+        if found is not None:
+            return found
         if matches and locator.cls:
-            typed = backend.find_all(
-                {"objectName": locator.object_name, "type": locator.cls})
-            if len(typed) == 1:
-                return typed[0]
+            typed_definition = {"objectName": locator.object_name,
+                                "type": locator.cls}
+            found = the_one(backend, typed_definition)
+            if found is not None:
+                return found
 
     if not locator.cls:
         return None
@@ -408,14 +411,16 @@ def find_by_locator(backend, locator: Locator):
         candidate = dict(base)
         candidate[prop] = value
         matches = backend.find_all(candidate)
-        if len(matches) == 1:
-            return matches[0]
+        found = the_one(backend, candidate, matches)
+        if found is not None:
+            return found
         if anchor:
             scoped = dict(candidate)
             scoped["container"] = {"objectName": anchor}
             scoped_matches = backend.find_all(scoped)
-            if len(scoped_matches) == 1:
-                return scoped_matches[0]
+            found = the_one(backend, scoped, scoped_matches)
+            if found is not None:
+                return found
             if 0 <= locator.index < len(scoped_matches):
                 return scoped_matches[locator.index]
 
@@ -423,8 +428,9 @@ def find_by_locator(backend, locator: Locator):
     if anchor:
         candidate["container"] = {"objectName": anchor}
     matches = backend.find_all(candidate)
-    if len(matches) == 1:
-        return matches[0]
+    found = the_one(backend, candidate, matches)
+    if found is not None:
+        return found
     if 0 <= locator.index < len(matches):
         return matches[locator.index]
     return None
@@ -853,11 +859,10 @@ class CaptureSession:
 
     def _handle_combo(self, event: RawEvent, combo_name: str) -> bool:
         """Choosing from a combo box: record the value, not the two clicks."""
-        matches = self.backend.find_all({"objectName": combo_name})
-        if len(matches) != 1:
+        node = the_one(self.backend, {"objectName": combo_name})
+        if node is None:
             self._drop(event, NO_COMBO)
             return True
-        node = matches[0]
         target = self.resolver.resolve(node)
         if target.robustness is Robustness.UNRESOLVED:
             self._drop(event, NO_COMBO)
