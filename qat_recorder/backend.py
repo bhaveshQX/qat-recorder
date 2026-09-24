@@ -338,6 +338,10 @@ class FakeBackend:
             elif key == "parent":
                 if node.parent_node is None or not self._matches(node.parent_node, value):
                     return False
+            elif key in ("visible", "enabled"):
+                # As in Qt: on and usable unless something turned it off.
+                if node.props.get(key, True) != value:
+                    return False
             else:
                 if node.props.get(key) != value:
                     return False
