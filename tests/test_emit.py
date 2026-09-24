@@ -301,3 +301,56 @@ def test_player_refuses_an_invalid_recording():
     broken.add(Action(ActionKind.CLICK, target=None))
     with pytest.raises(ValueError, match="invalid recording"):
         Player(FakeQat()).play(broken)
+
+
+# --- a recording Qat could not verify at all --------------------------------
+
+def _reported(label: str) -> Target:
+    """What naming.reported_target produces: the filter's first-hand account of
+    an object, never checked against the application because nothing matched."""
+    return Target(
+        definition={"objectName": label, "type": "RoundButton"},
+        alternatives=({"objectName": label},),
+        strategy="reported by the application as the event happened",
+        robustness=Robustness.REPORTED, label=label,
+        warnings=("the object had gone by the time it could be checked",))
+
+
+def test_an_unverified_step_says_so_in_the_script():
+    """REPORTED is the least certain grade there is -- the definition was never
+    checked against anything -- and it was the one grade whose warning never
+    reached the generated script."""
+    rec = Recording(app="x")
+    rec.add(Action(ActionKind.CLICK, target=_reported("ok")))
+    rec.add(Action(ActionKind.CLICK, target=Target(
+        definition={"objectName": "cancel"}, label="cancel",
+        robustness=Robustness.STRONG)))
+
+    source = emit_python(rec)
+    assert "# reported: the object had gone by the time it could be checked" \
+        in source
+
+
+def test_a_session_where_nothing_could_be_found_says_so_at_the_top():
+    """One unverified step is a race the recorder loses honestly: an OK button
+    dismisses its own dialog before it can be asked about. Every step unverified
+    is not a race -- it is Qat's tree not containing this part of the
+    application, which no generated test can work around. Measured on a QML
+    application: seven steps, all reported, ninety seconds of waiting each."""
+    rec = Recording(app="x")
+    for name in ("roundButton", "openCase"):
+        rec.add(Action(ActionKind.CLICK, target=_reported(name)))
+
+    source = emit_python(rec)
+    assert "WARNING: none of the 2 steps below was verified" in source
+    assert "qat-recorder probe" in source
+    compile(source, "generated.py", "exec")
+
+
+def test_the_banner_stays_away_when_anything_was_verified():
+    rec = Recording(app="x")
+    rec.add(Action(ActionKind.CLICK, target=_reported("ok")))
+    rec.add(Action(ActionKind.CLICK, target=Target(
+        definition={"objectName": "cancel"}, label="cancel",
+        robustness=Robustness.STRONG)))
+    assert "was verified" not in emit_python(rec)

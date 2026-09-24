@@ -691,9 +691,36 @@ def _cmd_web_panel(args) -> int:
     return 0
 
 
+def _cmd_probe(args) -> int:
+    from qat_recorder.probe import run
+
+    return run(app=args.app, launch_path=args.launch, args=args.args,
+               names=args.names, pause=args.pause)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="qat_recorder")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    probe_parser = sub.add_parser(
+        "probe", help="report what Qat's object tree contains, and what it "
+                      "does not")
+    probe_parser.add_argument(
+        "names", nargs="*",
+        help="objectNames to look up one by one -- the ones a failing replay "
+             "said it could not find")
+    probe_parser.add_argument(
+        "--app", default="", help="an application already registered with Qat")
+    probe_parser.add_argument(
+        "--launch", default="", metavar="EXE",
+        help="register and launch this executable or script instead")
+    probe_parser.add_argument(
+        "--args", default="", help="arguments passed to --launch")
+    probe_parser.add_argument(
+        "--pause", action="store_true",
+        help="wait for Enter before scanning, so you can navigate to the "
+             "screen the session used")
+    probe_parser.set_defaults(func=_cmd_probe)
 
     audit_parser = sub.add_parser(
         "audit", help="report how durably the application's objects can be named")
@@ -868,7 +895,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "audit" and not args.app and not args.launch:
+    if args.command in ("audit", "probe") and not args.app and not args.launch:
         parser.error("give a registered app name, or use --launch")
     return args.func(args)
 

@@ -498,7 +498,11 @@ def _call_for(action, constants: dict) -> list:
 
     if action.target is not None:
         robustness = action.target.robustness
-        if robustness in (Robustness.WEAK, Robustness.FRAGILE):
+        # REPORTED among them: it is the least certain grade there is -- the
+        # definition was never checked against the application at all -- and it
+        # was the one grade whose warning never reached the script.
+        if robustness in (Robustness.WEAK, Robustness.FRAGILE,
+                          Robustness.REPORTED):
             for warning in action.target.warnings:
                 lines.append(f"    # {robustness.value}: {warning}")
 
@@ -713,6 +717,50 @@ def emit_object_map(recording: Recording) -> str:
     return json.dumps(document, indent=2, sort_keys=False) + "\n"
 
 
+def _nothing_was_verified(recording: Recording) -> list:
+    """A banner for a recording in which Qat could not find a single object.
+
+    Every definition the recorder writes is normally proposed and then checked
+    against the running application. When the check finds nothing, the step
+    falls back to what the event filter read inside the application -- REPORTED
+    -- because for *one* step that is a race the recorder loses honestly: an OK
+    button dismisses the dialog it lives in before anything can ask about it.
+
+    When *every* step is that, it is not a race. It means Qat's object tree does
+    not contain the part of the application the session used, which it can do
+    while the application is plainly on screen and the filter is reading these
+    objects by name from inside it. Measured on a QML application: seven steps,
+    all REPORTED, and a replay that spent ninety seconds per step waiting for
+    objectNames the filter had read directly out of the running process.
+
+    Nothing the emitter can do makes that test pass -- so it says so at the top
+    instead of letting a replay discover it a minute and a half at a time.
+    """
+    targets = [action.target for action in recording.actions
+               if action.target is not None]
+    if not targets or any(target.robustness is not Robustness.REPORTED
+                          for target in targets):
+        return []
+    return [
+        "",
+        "# WARNING: none of the {} step{} below was verified.".format(
+            len(targets), "" if len(targets) == 1 else "s"),
+        "#",
+        "# Every one of them names an object that Qat could not find while the",
+        "# session was being recorded -- with the application running, on the",
+        "# screen the person was clicking. The definitions come from the event",
+        "# filter, which reads them inside the application, so the objects are",
+        "# certainly there; Qat's object tree does not have them.",
+        "#",
+        "# That is not something a generated test can work around: every call",
+        "# below addresses its object through Qat. QML that Qat's plugin cannot",
+        "# traverse is the usual reason -- see FINDINGS.md, 'QML is only",
+        "# visible in a top-level QQuickView'. `qat-recorder probe --launch",
+        "# <this application>` says which objects Qat does have.",
+        "",
+    ]
+
+
 def emit_python(recording: Recording, test_name: str = "test_recorded_session",
                 source: str = "recording.json") -> str:
     problems = recording.validate()
@@ -723,6 +771,7 @@ def emit_python(recording: Recording, test_name: str = "test_recorded_session",
     constants = _constant_names(recording, values)
 
     out = [HEADER.format(source=source), ""]
+    out.extend(_nothing_was_verified(recording))
     definitions = [action.target.definition for action in recording.actions
                    if action.target is not None]
     out.append(OVERRIDE_HELPER)
