@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping, Optional
 
 from qat_recorder.events import Locator, RawEvent
@@ -1410,11 +1410,46 @@ class CaptureSession:
                     return (None, reported), "", (
                         note or "the object had gone before it could be "
                         "checked; this is what the application reported it as")
+                else:
+                    return self._on_screen(reported, note)
             return None, NOT_FINDABLE, ""
         target = self.resolver.resolve(node)
         if target.robustness is Robustness.UNRESOLVED:
             return None, NOT_UNIQUE, ""
         return (node, target), "", note
+
+    def _on_screen(self, reported: Target, note: str):
+        """Several objects have what the filter reported: count the usable ones.
+
+        A replay finds objects through `wait_for_object`, which only counts one
+        that is visible and enabled. An application that keeps its other pages
+        alive has several of the same button, one of them on screen -- observed
+        in mako_shoulder as "Load Case", dropped as not findable while it was
+        the one being clicked. So the question is the replay's: which of the
+        reported definitions names exactly one usable object?
+        """
+        candidates = (reported.definition,) + tuple(reported.alternatives)
+        counts = []
+        for candidate in candidates:
+            try:
+                usable = list(self.backend.find_all(
+                    {**candidate, "visible": True, "enabled": True}))
+            except Exception:                                # noqa: BLE001
+                usable = []
+            if len(usable) == 1:
+                rest = tuple(one for one in candidates if one is not candidate)
+                return (None, replace(reported, definition=candidate,
+                                      alternatives=rest)), "", (
+                    note or "several objects have this; it was the one on "
+                    "screen, which is the one a replay finds")
+            counts.append(len(usable))
+        if not any(counts):
+            # None of them is on screen any more: the click took it away, and
+            # the report is the only account of it, as when nothing matches.
+            return (None, reported), "", (
+                note or "the object had gone before it could be checked; "
+                "this is what the application reported it as")
+        return None, NOT_UNIQUE, ""
 
     def _drop(self, event: RawEvent, reason: str = "") -> None:
         """Count an event that could not be recorded, say why, and say where.
