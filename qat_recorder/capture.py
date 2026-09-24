@@ -1406,6 +1406,15 @@ class CaptureSession:
                     found = self.resolver.resolve(matches[0])
                     if found.robustness is not Robustness.UNRESOLVED:
                         return (matches[0], found), "", note
+                    # The report names exactly one object, and the resolver
+                    # could not build a definition of its own for it: the tree
+                    # was changing underneath -- the first lookup a moment ago
+                    # found nothing to settle on. That is a click that rebuilds
+                    # its page ("Load Case" in mako_shoulder), and dropping it
+                    # as not findable lost the step the rest of the test needed.
+                    return (None, reported), "", (
+                        note or "the application was changing when this was "
+                        "checked; this is what it reported the object as")
                 elif not matches:
                     return (None, reported), "", (
                         note or "the object had gone before it could be "

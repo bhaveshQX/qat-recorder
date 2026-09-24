@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from qat_recorder.backend import FakeBackend, FakeNode
 from qat_recorder.capture import CaptureSession
-from qat_recorder.ir import ActionKind
+from qat_recorder.ir import ActionKind, Robustness, Target
 from tests.test_capture import click_pair
 
 BUTTON = ["RoundButton", "QQuickItem", "QObject"]
@@ -57,3 +57,44 @@ def test_two_on_screen_at_once_is_still_not_guessed():
     guess that made scripts die on "Multiple objects found"."""
     clicks, _ = record_load_case(pages(True, True))
     assert clicks == []
+
+
+class ChangingBackend(FakeBackend):
+    """The first lookups find nothing to settle on, the later ones find it:
+    the page is being rebuilt while the recorder asks."""
+
+    def __init__(self, roots, blind_for):
+        super().__init__(roots)
+        self.blind_for = blind_for
+
+    def find_all(self, definition):
+        if self.blind_for > 0:
+            self.blind_for -= 1
+            return []
+        return super().find_all(definition)
+
+
+def test_a_click_that_rebuilds_its_page_is_kept_from_the_report():
+    """Observed in mako_shoulder: "Load Case" dropped as "could not be found
+    through Qat while it was on screen" while it was the button clicked. The
+    lookups made while the page was being rebuilt found nothing; the one after
+    them found exactly the button the filter reported."""
+    window = FakeNode(["QQuickView", "QObject"], {"objectName": "view"})
+    layout = window.add(FakeNode(ITEM, {"objectName": "buttonLayout"}))
+    layout.add(FakeNode(BUTTON, {"objectName": "loadCaseButton",
+                                 "text": "Load Case"}))
+    # Blind for every lookup find_by_locator makes, then sighted.
+    backend = ChangingBackend([window], blind_for=4)
+    capture = CaptureSession(backend, app_name="mako")
+    capture.resolver.resolve = lambda node: Target(
+        definition={}, robustness=Robustness.UNRESOLVED)
+
+    capture.feed_all(click_pair(1_000, "RoundButton", "loadCaseButton",
+                                text="Load Case",
+                                path=[("QQuickItem", "buttonLayout")]))
+    recording = capture.finish()
+
+    clicks = [action for action in recording.actions
+              if action.kind is ActionKind.CLICK]
+    assert len(clicks) == 1, recording.drops
+    assert clicks[0].target.definition["objectName"] == "loadCaseButton"
