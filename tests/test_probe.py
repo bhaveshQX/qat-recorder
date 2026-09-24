@@ -102,3 +102,42 @@ def test_the_command_is_reachable_from_the_cli():
     assert args.launch == "/opt/app.sh"
     assert args.pause is True
     assert args.names == ["roundButton"]
+
+
+class Labelled:
+    """A control whose label lives in a child item, as a custom QML button's
+    often does -- which leaves the recorder with nothing but its type."""
+
+    def __init__(self, type_name, visible=True, text=None, children=()):
+        self._definition = {"type": type_name, "visible": visible}
+        if text is not None:
+            self.text = text
+        self.children = list(children)
+
+    def get_definition(self):
+        return dict(self._definition)
+
+
+def test_types_lists_the_visible_ones_and_the_text_inside_them():
+    from qat_recorder.probe import inspect_types
+
+    shown = Labelled("DarlinMessageDialogButton",
+                     children=[Labelled("Text", text="Discard")])
+    hidden = Labelled("DarlinMessageDialogButton", visible=False,
+                      children=[Labelled("Text", text="Hidden")])
+    collected = []
+    inspect_types(FakeQat(objects=[shown, hidden]),
+                  ["DarlinMessageDialogButton", "ItemDelegate"],
+                  out=collected.append)
+    text = "\n".join(collected)
+    assert "text inside it: Discard" in text
+    assert "Hidden" not in text
+    assert "(nothing but its type)" in text
+    assert "visible ItemDelegate" in text and "none on screen" in text
+
+
+def test_probe_takes_types_on_the_command_line():
+    args = build_parser().parse_args(
+        ["probe", "--launch", "/opt/app.sh", "--type", "ItemDelegate",
+         "--type", "DarlinMessageDialogButton"])
+    assert args.type == ["ItemDelegate", "DarlinMessageDialogButton"]

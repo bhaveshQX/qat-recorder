@@ -160,8 +160,69 @@ def report(qat, names=(), out=print) -> dict:
             "widgets": widget_total, "missing": missing}
 
 
+#: What a control can be told apart by, when it has no objectName. A button
+#: drawn as a custom QML component often keeps its label in a property of its own
+#: or in a child Text item rather than in `text`, and then the recorder has only
+#: a type to go on -- which is how a dialog button in mako_shoulder arrived as
+#: {"type": "DarlinMessageDialogButton"} and nothing else.
+IDENTIFYING = ("objectName", "id", "text", "title", "label", "displayText",
+               "currentText", "toolTip", "accessibleName")
+
+
+def _read(obj, name):
+    try:
+        value = getattr(obj, name)
+    except Exception:                                        # noqa: BLE001
+        return None
+    return value if isinstance(value, (str, int, float, bool)) else None
+
+
+def _child_texts(obj, depth: int = 3, limit: int = 40) -> list:
+    texts, queue, seen = [], [(obj, 0)], 0
+    while queue and seen < limit:
+        node, level = queue.pop(0)
+        seen += 1
+        if level:
+            text = _read(node, "text")
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
+        if level < depth:
+            try:
+                children = node.children
+            except Exception:                                # noqa: BLE001
+                children = []
+            if isinstance(children, list):
+                queue.extend((child, level + 1) for child in children)
+    return texts
+
+
+def inspect_types(qat, types, out=print, limit: int = 10) -> None:
+    """Every visible object of each type, and what could identify it."""
+    for type_name in types:
+        out(f"\n--- visible {type_name} ---------------------------------------")
+        try:
+            found = list(qat.find_all_objects({"type": type_name,
+                                               "visible": True}))
+        except Exception as error:                           # noqa: BLE001
+            out(f"  lookup failed: {error}")
+            continue
+        if not found:
+            out("  none on screen. Navigate to where it shows, and run again.")
+            continue
+        for obj in found[:limit]:
+            values = {name: _read(obj, name) for name in IDENTIFYING}
+            shown = ", ".join(f"{name}={value!r}" for name, value in values.items()
+                              if value not in (None, ""))
+            out("  " + (shown or "(nothing but its type)"))
+            texts = _child_texts(obj)
+            if texts:
+                out("    text inside it: " + " | ".join(texts[:8]))
+        if len(found) > limit:
+            out(f"  ... and {len(found) - limit} more")
+
+
 def run(app: str = "", launch_path: str = "", args: str = "",
-        names=(), pause: bool = False, out=print) -> int:
+        names=(), pause: bool = False, out=print, types=()) -> int:
     """Launch the application the way the recorder does, then report."""
     try:
         import qat                                           # noqa: PLC0415
@@ -195,6 +256,7 @@ def run(app: str = "", launch_path: str = "", args: str = "",
             except EOFError:
                 pass
         report(qat, names, out=out)
+        inspect_types(qat, types, out=out)
     finally:
         try:
             launch.close(qat, context)

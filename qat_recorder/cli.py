@@ -709,7 +709,7 @@ def _cmd_probe(args) -> int:
     from qat_recorder.probe import run
 
     return run(app=args.app, launch_path=args.launch, args=args.args,
-               names=args.names, pause=args.pause)
+               names=args.names, pause=args.pause, types=args.type)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -734,6 +734,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--pause", action="store_true",
         help="wait for Enter before scanning, so you can navigate to the "
              "screen the session used")
+    probe_parser.add_argument(
+        "--type", action="append", default=[], metavar="TYPE",
+        help="list the visible objects of this type and what could identify "
+             "them -- for a control the recorder dropped as unnamed (repeatable)")
     probe_parser.set_defaults(func=_cmd_probe)
 
     audit_parser = sub.add_parser(
