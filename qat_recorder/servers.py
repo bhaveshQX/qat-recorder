@@ -230,6 +230,37 @@ def restore(bin_dir=None) -> List[Path]:
     return restored
 
 
+#: The plugin native/qatembedded.cpp builds, for QML embedded in a widget.
+EMBEDDED_PLUGIN = "QatrecEmbeddedPlugin"
+
+
+def install_embedded_plugin(built, bin_dir=None) -> List[Path]:
+    """Put the embedded-QML plugin where Qat's server will load it.
+
+    The server loads every library in `plugins/` whose name ends in the Qt
+    version *it* was built for -- which, after `--fix`, is not the version in its
+    file name: the 6.7 server standing in as libQatServer.6.8.so looks for
+    `6.7.so`. So the plugin goes in under every version Qat's own QML plugin
+    ships for, of the major it was built against, and whichever server loads
+    finds it. Returns what was written.
+    """
+    built = Path(built)
+    folder = Path(bin_dir) if bin_dir is not None else qat_bin_dir()
+    if folder is None or not built.is_file():
+        return []
+    plugins = folder / "plugins"
+    # libQatrecEmbeddedPlugin.6.so -> major 6, extension .so
+    major = built.name.split(".")[1]
+    extension = built.suffix
+    installed = []
+    for qml in sorted(plugins.glob(f"libQmlPlugin.{major}.*{extension}")):
+        version = qml.name[len("libQmlPlugin."):-len(extension)]
+        target = plugins / f"lib{EMBEDDED_PLUGIN}.{version}{extension}"
+        shutil.copy2(built, target)
+        installed.append(target)
+    return installed
+
+
 def substituted(bin_dir=None) -> List[Path]:
     """Servers currently standing in for another."""
     folder = Path(bin_dir) if bin_dir is not None else qat_bin_dir()
