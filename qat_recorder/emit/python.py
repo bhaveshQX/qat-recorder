@@ -120,10 +120,47 @@ def find(candidates, timeout_ms=None):
         time.sleep(0.1)
 
     # Nothing matched. Say what was tried, in order, because the first one is
-    # the one that used to work and the rest say how hard we looked.
+    # the one that used to work and the rest say how hard we looked -- and what
+    # the application has for each, because "it is not there" and "it is there
+    # and Qat will not use it" are different problems with different fixes.
     raise AssertionError(
         "none of these found a usable object after {:.0f}s:\\n  {}".format(
-            limit, "\\n  ".join(repr(one) for one in candidates)))
+            limit, "\\n  ".join(_diagnose(one) for one in candidates)))
+
+
+def _diagnose(definition):
+    """One line: a definition that did not work, and what the application has.
+
+    `wait_for_object` asks two questions at once -- does this object exist, and
+    is it visible and enabled -- by adding `visible: True` and `enabled: True`
+    to the definition, and to every definition nested inside it. A "no" cannot
+    say which question it answered, and the two mean opposite things: a missing
+    object is a changed application, an unusable one is a step that ran too
+    early or a window that has no such property to match on at all.
+
+    Asking again without those, which is what the recorder itself asked when it
+    checked this definition against the running application, tells them apart.
+    """
+    try:
+        matches = qat.find_all_objects(definition)
+    except Exception as error:                               # noqa: BLE001
+        return "{!r} -- could not be looked up: {}".format(definition, error)
+    if not matches:
+        return "{!r} -- no object in the application has this".format(definition)
+    if len(matches) > 1:
+        return "{!r} -- {} objects have this, so it names none of them".format(
+            definition, len(matches))
+    state = []
+    for name in ("visible", "enabled"):
+        try:
+            state.append("{}={}".format(name, getattr(matches[0], name)))
+        except Exception:                                    # noqa: BLE001
+            # A QWindow has no `enabled` property, so a definition scoped by
+            # one can never satisfy the wait however plainly it is on screen.
+            state.append("no {} property".format(name))
+    return ("{!r} -- exactly one object has this ({}), but it was not usable: "
+            "Qat waits for one that is visible and enabled".format(
+                definition, ", ".join(state)))
 
 
 def override(name, definition):

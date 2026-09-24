@@ -15,6 +15,7 @@ be the same machine.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,69 @@ NO_DISPLAY = (
     "watching (or export DISPLAY first) -- replay drives a real UI and needs a "
     "screen to draw on, exactly as recording did."
 )
+
+
+#: pytest reprints everything the application wrote to its own stdout, under a
+#: heading like `---- Captured stdout call ----`, *after* the traceback. An
+#: application that retries a socket once a second writes tens of thousands of
+#: lines while a step waits for an object -- so keeping the tail of the output
+#: keeps the noise and throws the failure away. That is not hypothetical: a
+#: replay that failed on "none of these found a usable object" came back as
+#: 20000 characters of reconnect warnings, with the assertion that says which
+#: object and what was tried cut off mid-word.
+CAPTURED = re.compile(r"^-+ Captured \w+ \w+ -+$")
+
+#: A pytest section heading -- `=== FAILURES ===`, `___ test_name ___` -- which
+#: is what ends a block of the application's own output. Rules of dashes are
+#: not accepted: an application draws those in its own log, and one of them
+#: ending the block early would let the rest of the log through unchanged.
+SECTION = re.compile(r"^(?:={5,}|_{5,}).*(?:={5,}|_{5,})$")
+
+#: How many lines to keep from each block the application wrote: enough for its
+#: dying words -- the traceback it printed, the last thing it did before it
+#: aborted -- and far short of an hour of one warning a second.
+CAPTURED_LINES = 40
+
+
+def condense(text: str, keep: int = CAPTURED_LINES) -> str:
+    """The same output, with the application's own noise cut down to its end.
+
+    Only the blocks pytest captured from the application are touched. pytest's
+    own report -- the traceback, the assertion, the summary -- is what a replay
+    is read for, and it comes through whole however long the log was.
+    """
+    out: list = []
+    block: list = []
+    inside = False
+
+    def flush():
+        if not block:
+            return
+        if len(block) <= keep:
+            out.extend(block)
+        else:
+            out.append(f"... {len(block) - keep} earlier lines from the "
+                       "application, omitted ...")
+            out.extend(block[-keep:])
+        del block[:]
+
+    for line in text.splitlines():
+        if CAPTURED.match(line):
+            flush()
+            inside = True
+            out.append(line)
+        elif inside and SECTION.match(line):
+            flush()
+            inside = False
+            out.append(line)
+        elif inside:
+            block.append(line)
+        else:
+            out.append(line)
+    flush()
+
+    joined = "\n".join(out)
+    return joined + "\n" if text.endswith("\n") else joined
 
 
 def tail(text: str, limit: int = MAX_OUTPUT) -> str:
@@ -82,5 +146,7 @@ def run_pytest(directory, test_file: str = "test_recorded.py",
         "ok": finished.returncode == 0,
         "exit_code": finished.returncode,
         "directory": str(directory),
-        "output": tail(output),
+        # Condensed before it is trimmed: the trim keeps the end, and the end
+        # is the application's log unless the log is cut down first.
+        "output": tail(condense(output)),
     }

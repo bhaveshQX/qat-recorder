@@ -121,6 +121,55 @@ def test_the_failure_names_everything_it_tried():
     assert "candidates" in chooser
 
 
+def test_the_failure_says_what_the_application_has_for_each():
+    """Listing the definitions that did not work says how hard we looked. It
+    does not say *why*, and the two reasons want opposite fixes: an object that
+    is not there means the application changed, an object that is there and not
+    usable means the step ran too early -- or that the wait cannot be expressed
+    for it at all, which is the case for a window. `wait_for_object` asks Qat
+    for one that is `visible` and `enabled`, and a QWindow has no `enabled`
+    property to match on, so a definition scoped by one can never be satisfied
+    however plainly it is on screen. Recording never notices: it validates with
+    `find_all_objects`, which adds neither."""
+    import sys
+    import types
+
+    class Window:
+        """On screen, and with no `enabled` property -- like every QWindow."""
+        visible = True
+
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    stub = types.ModuleType("qat")
+    stub.wait_for_object = lambda definition, timeout=None: (_ for _ in ()).throw(
+        LookupError("Unable to find object"))
+    stub.find_all_objects = lambda definition: (
+        [Window()] if definition == {"objectName": "loginButton"} else [])
+
+    original = sys.modules.get("qat")
+    sys.modules["qat"] = stub
+    try:
+        generated_module = {"__file__": __file__}
+        exec(compile(generated(), "generated.py", "exec"), generated_module)
+        with pytest.raises(AssertionError) as failure:
+            generated_module["find"](
+                [{"objectName": "loginButton"}, {"objectName": "gone"}],
+                timeout_ms=0)
+    finally:
+        if original is None:
+            del sys.modules["qat"]
+        else:
+            sys.modules["qat"] = original
+
+    message = str(failure.value)
+    assert "exactly one object has this" in message
+    assert "visible=True" in message
+    assert "no enabled property" in message
+    assert "{'objectName': 'gone'} -- no object in the application has this" \
+        in message
+
+
 def test_no_step_is_left_with_a_bare_definition():
     """Every use of a constant goes through `find`, or the alternatives are
     decoration."""

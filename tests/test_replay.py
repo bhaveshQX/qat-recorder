@@ -13,7 +13,8 @@ import sys
 
 import pytest
 
-from qat_recorder.replay import NO_DISPLAY, run_pytest, tail
+from qat_recorder.replay import (
+    MAX_OUTPUT, NO_DISPLAY, condense, run_pytest, tail)
 
 PASSING = "def test_ok():\n    assert True\n"
 FAILING = "def test_no():\n    assert 1 == 2\n"
@@ -84,6 +85,60 @@ def test_output_is_capped_from_the_end():
 
 def test_short_output_is_left_alone():
     assert tail("brief") == "brief"
+
+
+# --- what a failed replay is read for ---------------------------------------
+
+def _pytest_report(app_lines: int) -> str:
+    """A failing pytest run of an application that will not stop logging."""
+    noise = "".join(
+        "[Mako3.SocketComm] WARN : Connection refused, attempt {}\n".format(i)
+        for i in range(app_lines))
+    return (
+        "=================================== FAILURES ==================="
+        "================\n"
+        "_____________________________ test_recorded_session ____________"
+        "________________\n"
+        "E   AssertionError: none of these found a usable object after 20s:\n"
+        "E     {'objectName': 'openCase'}\n"
+        "----------------------------- Captured stdout call -------------"
+        "----------------\n"
+        + noise +
+        "=========================== short test summary info ============"
+        "================\n"
+        "FAILED test_recorded.py::test_recorded_session - AssertionError\n")
+
+
+def test_the_application_log_does_not_push_out_the_failure():
+    """The whole point of reading a replay. An application retrying a socket
+    once a second wrote 20000 characters of warnings while one step waited, and
+    the tail kept those and cut the assertion off mid-word -- so the report said
+    nothing at all about which object was not found."""
+    condensed = condense(_pytest_report(5000))
+
+    assert "none of these found a usable object" in condensed
+    assert "{'objectName': 'openCase'}" in condensed
+    assert len(tail(condensed)) < MAX_OUTPUT       # nothing is trimmed away
+    # The end of the application's own log survives: it is where it says why it
+    # gave up, when that is the failure.
+    assert "attempt 4999" in condensed
+    assert "attempt 0\n" not in condensed
+    assert "omitted" in condensed
+
+
+def test_pytests_own_report_is_never_condensed():
+    """Only what the application wrote. A short run passes through untouched."""
+    report = ("=================================== FAILURES ==============="
+              "====================\n"
+              "E   AssertionError: none of these found a usable object\n"
+              "=========================== short test summary info ========"
+              "====================\n")
+    assert condense(report) == report
+
+
+def test_a_quiet_application_keeps_every_line_it_wrote():
+    report = _pytest_report(5)
+    assert condense(report) == report
 
 
 # --- through the agent ------------------------------------------------------
