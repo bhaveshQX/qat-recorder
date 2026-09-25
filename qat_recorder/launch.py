@@ -470,6 +470,36 @@ def _supports_detached(function) -> bool:
         return False
 
 
+#: A shell command that puts the application back where every session starts.
+RESET_ENV = "QATREC_RESET"
+
+
+def reset_application_state(run: Callable = subprocess.run) -> None:
+    """Run QATREC_RESET, if it is set, before the application starts.
+
+    An application that saves where it was resumes there. mako_shoulder keeps
+    the open case -- its workflow step, its plan, its images -- in the case's own
+    folder and restores all of it on the next Load Case, so every recording and
+    every replay started from wherever the last one left off, and a test
+    recorded from the start screen could never find its first step again.
+    Which files, and what "the start" is, belongs to the application, so the
+    recorder takes a command rather than a folder: restore a saved copy, run the
+    product's own reset, anything. It runs for recording, replay and probe
+    alike, because they all start here, and a failure stops the launch rather
+    than letting it run against the wrong state.
+    """
+    command = os.environ.get(RESET_ENV, "").strip()
+    if not command:
+        return
+    result = run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[-800:]
+        raise LaunchError(
+            f"{RESET_ENV} failed with exit code {result.returncode}, so the "
+            f"application was not started:\n    {command}"
+            + (f"\n{detail}" if detail else ""))
+
+
 def start(qat_module, name: str, *, app_path=None, follow: Optional[bool] = None,
           timeout_ms: Optional[int] = None, folder=None,
           parent: Callable = parent_of, sleep: Callable = time.sleep,
@@ -482,6 +512,7 @@ def start(qat_module, name: str, *, app_path=None, follow: Optional[bool] = None
     application launched directly takes Qat's own path unchanged -- there is
     nothing to improve there, and nothing worth risking.
     """
+    reset_application_state()
     if follow is None:
         # Under sudo the application is sudo's child, whatever it is.
         follow = is_script(app_path) or as_root()
